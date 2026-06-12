@@ -2,11 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import {
+  killAllAgents,
+  readFileCapped,
   resolveCliEntry,
   runAgent,
   truncateMiddle,
@@ -32,6 +34,11 @@ const sharedShape = {
     ),
   model: z
     .string()
+    // a leading dash could smuggle a CLI flag (e.g. --yolo) into the argv
+    .regex(
+      /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/,
+      "model must be a plain model id (letters, digits, . _ : / -; no leading dash)"
+    )
     .optional()
     .describe(
       "Model override. Omit to use the user's configured default (recommended)."
@@ -219,7 +226,7 @@ server.registerTool(
 
       let answer = "";
       try {
-        answer = (await readFile(tmpOut, "utf8")).trim();
+        answer = (await readFileCapped(tmpOut)).trim();
       } catch {
         // fall back to stdout below
       }
@@ -237,14 +244,16 @@ server.registerTool(
     title: "Ask Google Gemini (second opinion)",
     description:
       "Get a second opinion from Google Gemini (Gemini 2.5-class agent with a very large context " +
-      "window — good for questions spanning many files) running locally with read-only access to " +
-      "the user's files. One-shot and stateless: it explores the given cwd, reasons about the " +
-      "code, and returns a single final answer. It cannot edit files or run state-changing " +
-      "commands. Use for: reviewing a plan or diff, debugging hypotheses, architecture " +
-      "trade-offs, or cross-checking your own conclusion. Calls typically take 1-5 minutes. " +
-      "May be called in parallel with ask_codex.",
+      "window — good for questions spanning many files) running locally over the user's files. " +
+      "One-shot and stateless: it explores the given cwd, reasons about the code, and returns a " +
+      "single final answer. File edits and shell commands are auto-denied (non-interactive " +
+      "default approval mode), but unlike ask_codex this is CLI policy rather than an OS " +
+      "sandbox, and the agent can reach the network (web fetch, Google Search) — avoid pointing " +
+      "it at directories containing secrets. Use for: reviewing a plan or diff, debugging " +
+      "hypotheses, architecture trade-offs, or cross-checking your own conclusion. Calls " +
+      "typically take 1-5 minutes. May be called in parallel with ask_codex.",
     inputSchema: sharedShape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, openWorldHint: true },
   },
   draining(async (args: SharedArgs, extra) => {
     let entry: string;
@@ -306,5 +315,14 @@ process.stdin.on("end", () => {
   stdinEnded = true;
   maybeExitAfterDrain();
 });
-process.on("SIGINT", () => process.exit(0));
-process.on("SIGTERM", () => process.exit(0));
+function shutdown() {
+  // don't let agent processes outlive the server; the fallback timer covers
+  // a hung taskkill
+  const fallback = setTimeout(() => process.exit(0), 3_000);
+  void killAllAgents().finally(() => {
+    clearTimeout(fallback);
+    process.exit(0);
+  });
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
