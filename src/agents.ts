@@ -23,8 +23,8 @@ export interface AgentResult {
   durationMs: number;
 }
 
-const STREAM_HEAD_CAP = 2_500_000;
-const STREAM_TAIL_CAP = 2_500_000;
+export const STREAM_HEAD_CAP = 2_500_000;
+export const STREAM_TAIL_CAP = 2_500_000;
 const PROGRESS_INTERVAL_MS = 10_000;
 const POST_KILL_GRACE_MS = 5_000;
 
@@ -56,9 +56,9 @@ export function truncateMiddle(s: string, max = 50_000): string {
   );
 }
 
-const FILE_READ_CAP = 5 * 1024 * 1024;
-const FILE_HEAD_BYTES = 256 * 1024;
-const FILE_TAIL_BYTES = 256 * 1024;
+export const FILE_READ_CAP = 5 * 1024 * 1024;
+export const FILE_HEAD_BYTES = 256 * 1024;
+export const FILE_TAIL_BYTES = 256 * 1024;
 
 /**
  * Read a UTF-8 text file with bounded memory: files over FILE_READ_CAP are
@@ -90,7 +90,7 @@ export async function readFileCapped(filePath: string): Promise<string> {
  * kept verbatim, then a rolling buffer keeps the last STREAM_TAIL_CAP chars,
  * so the end of the stream (final answers, fatal errors) always survives.
  */
-function makeStreamCollector() {
+export function makeStreamCollector() {
   let head = "";
   const tail: string[] = [];
   let tailLen = 0;
@@ -123,6 +123,20 @@ function makeStreamCollector() {
         : head + joined;
     },
   };
+}
+
+const GEMINI_NOISE = [
+  /^Loaded cached credentials\.\s*$/,
+  /^Warning: 256-color support not detected\./,
+  /^Ripgrep is not available\. Falling back to GrepTool\.\s*$/,
+];
+
+export function cleanGeminiOutput(stdout: string): string {
+  return stdout
+    .split(/\r?\n/)
+    .filter((line) => !GEMINI_NOISE.some((re) => re.test(line)))
+    .join("\n")
+    .trim();
 }
 
 const entryCache = new Map<string, string>();

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import {
+  cleanGeminiOutput,
   killAllAgents,
   readFileCapped,
   resolveCliEntry,
@@ -117,20 +118,6 @@ function resolveCwd(cwd: string | undefined): string {
     throw new Error(`cwd "${resolved}" does not exist or is not a directory.`);
   }
   return resolved;
-}
-
-const GEMINI_NOISE = [
-  /^Loaded cached credentials\.\s*$/,
-  /^Warning: 256-color support not detected\./,
-  /^Ripgrep is not available\. Falling back to GrepTool\.\s*$/,
-];
-
-function cleanGeminiOutput(stdout: string): string {
-  return stdout
-    .split(/\r?\n/)
-    .filter((line) => !GEMINI_NOISE.some((re) => re.test(line)))
-    .join("\n")
-    .trim();
 }
 
 const server = new McpServer({ name: "second-opinion", version: "1.0.0" });
