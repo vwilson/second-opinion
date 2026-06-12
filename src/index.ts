@@ -8,11 +8,14 @@ import {
   cleanGeminiOutput,
   killAllAgents,
   readFileCapped,
+  resolveClaudeCli,
   runAgent,
   truncateMiddle,
   type AgentResult,
+  type CliCommand,
 } from "./agents.js";
 import {
+  buildClaudeArgv,
   buildCodexArgv,
   buildGeminiArgv,
   geminiExtraEnv,
@@ -194,8 +197,8 @@ server.registerTool(
 
     try {
       const result = await runAgent({
-        entry,
-        argv,
+        command: process.execPath,
+        argv: [entry, ...argv],
         prompt: args.prompt,
         cwd,
         timeoutMs: args.timeout_seconds * 1000,
@@ -248,8 +251,8 @@ server.registerTool(
     const extraEnv = geminiExtraEnv();
 
     const result = await runAgent({
-      entry,
-      argv,
+      command: process.execPath,
+      argv: [entry, ...argv],
       prompt: args.prompt,
       cwd,
       timeoutMs: args.timeout_seconds * 1000,
@@ -259,6 +262,47 @@ server.registerTool(
     if (!result.ok) return errorResult("gemini", result);
 
     return textResult(truncateMiddle(cleanGeminiOutput(result.output)));
+  })
+);
+
+server.registerTool(
+  "ask_claude",
+  {
+    title: "Ask Anthropic Claude (second opinion)",
+    description:
+      "Get a second opinion from Anthropic Claude (Claude Code CLI) running locally with " +
+      "read-only access to the user's files. One-shot and stateless: it explores the given cwd, " +
+      "reasons about the code, and returns a single final answer. File edits, shell commands, " +
+      "and network tools are disabled by policy (--disallowedTools; not an OS sandbox). Use " +
+      "for: reviewing a plan or diff, debugging hypotheses, architecture trade-offs, or " +
+      "cross-checking your own conclusion. Most useful when this server is hosted by a " +
+      "non-Claude client; from Claude Code itself, prefer ask_codex/ask_gemini for an " +
+      "independent perspective. Calls typically take 1-5 minutes. May be called in parallel " +
+      "with the other tools.",
+    inputSchema: sharedShape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  draining(async (args: SharedArgs, extra) => {
+    let cli: CliCommand;
+    let cwd: string;
+    try {
+      cli = resolveClaudeCli();
+      cwd = resolveCwd(args.cwd);
+    } catch (err) {
+      return textResult(String(err instanceof Error ? err.message : err), true);
+    }
+
+    const result = await runAgent({
+      command: cli.command,
+      argv: [...cli.prefixArgs, ...buildClaudeArgv(args.model)],
+      prompt: args.prompt,
+      cwd,
+      timeoutMs: args.timeout_seconds * 1000,
+      onProgress: makeProgressReporter("claude", extra as HandlerExtra),
+    });
+    if (!result.ok) return errorResult("claude", result);
+
+    return textResult(truncateMiddle(result.output.trim()));
   })
 );
 

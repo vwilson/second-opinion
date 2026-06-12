@@ -4,10 +4,13 @@ import {
   cleanGeminiOutput,
   killAllAgents,
   readFileCapped,
+  resolveClaudeCli,
   runAgent,
   type AgentResult,
+  type CliCommand,
 } from "./agents.js";
 import {
+  buildClaudeArgv,
   buildCodexArgv,
   buildGeminiArgv,
   geminiExtraEnv,
@@ -61,8 +64,8 @@ async function checkCodex(cwd: string): Promise<DoctorReport> {
   const outFile = newCodexOutFile();
   try {
     const result = await runAgent({
-      entry,
-      argv: buildCodexArgv(cwd, outFile),
+      command: process.execPath,
+      argv: [entry, ...buildCodexArgv(cwd, outFile)],
       prompt: DOCTOR_PROMPT,
       cwd,
       timeoutMs: DOCTOR_TIMEOUT_MS,
@@ -93,8 +96,8 @@ async function checkGemini(cwd: string): Promise<DoctorReport> {
     return { name: "gemini", ok: false, lines: [errorMessage(err)] };
   }
   const result = await runAgent({
-    entry,
-    argv: buildGeminiArgv(),
+    command: process.execPath,
+    argv: [entry, ...buildGeminiArgv()],
     prompt: DOCTOR_PROMPT,
     cwd,
     timeoutMs: DOCTOR_TIMEOUT_MS,
@@ -109,8 +112,30 @@ async function checkGemini(cwd: string): Promise<DoctorReport> {
   return { name: "gemini", ok: true, lines: [...lines, okLine(result, answer)] };
 }
 
+async function checkClaude(cwd: string): Promise<DoctorReport> {
+  let cli: CliCommand;
+  try {
+    cli = resolveClaudeCli();
+  } catch (err) {
+    return { name: "claude", ok: false, lines: [errorMessage(err)] };
+  }
+  const result = await runAgent({
+    command: cli.command,
+    argv: [...cli.prefixArgs, ...buildClaudeArgv()],
+    prompt: DOCTOR_PROMPT,
+    cwd,
+    timeoutMs: DOCTOR_TIMEOUT_MS,
+    onProgress: async () => {},
+  });
+  const lines = [`entry: ${[cli.command, ...cli.prefixArgs].join(" ")}`];
+  if (!result.ok) {
+    return { name: "claude", ok: false, lines: [...lines, ...failureLines(result)] };
+  }
+  return { name: "claude", ok: true, lines: [...lines, okLine(result, result.output)] };
+}
+
 /**
- * Resolve both CLIs and run a one-line prompt through each, so a broken
+ * Resolve each CLI and run a one-line prompt through it, so a broken
  * install or expired login surfaces here instead of as an opaque tool error
  * mid-conversation. Returns the process exit code.
  */
@@ -127,7 +152,11 @@ export async function runDoctor(): Promise<number> {
   console.log(
     "second-opinion doctor — sending a one-line prompt through each CLI (can take a minute)..."
   );
-  const reports = await Promise.all([checkCodex(cwd), checkGemini(cwd)]);
+  const reports = await Promise.all([
+    checkCodex(cwd),
+    checkGemini(cwd),
+    checkClaude(cwd),
+  ]);
 
   for (const report of reports) {
     console.log(`\n${report.name}:`);

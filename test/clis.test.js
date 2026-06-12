@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  buildClaudeArgv,
   buildCodexArgv,
   buildGeminiArgv,
   geminiExtraEnv,
@@ -48,6 +49,43 @@ test("buildGeminiArgv uses non-interactive default approval mode", () => {
     "--approval-mode",
     "default",
   ]);
+});
+
+test("buildClaudeArgv produces an isolated read-only print invocation", () => {
+  const argv = buildClaudeArgv();
+  assert.equal(argv[0], "-p");
+  assert.equal(argv[argv.indexOf("--output-format") + 1], "text");
+  assert.ok(argv.includes("--strict-mcp-config"), "must not load MCP servers");
+  assert.equal(
+    argv[argv.indexOf("--setting-sources") + 1],
+    "",
+    "must load no settings files"
+  );
+  assert.deepEqual(
+    JSON.parse(argv[argv.indexOf("--settings") + 1]),
+    { disableAllHooks: true, permissions: { additionalDirectories: [] } }
+  );
+  const denied = argv.slice(argv.indexOf("--disallowedTools") + 1);
+  for (const tool of [
+    "Bash",
+    "PowerShell",
+    "Monitor",
+    "EnterWorktree",
+    "ExitWorktree",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+  ]) {
+    assert.ok(denied.includes(tool), `${tool} must be denied`);
+  }
+  assert.ok(!argv.includes("--model"), "no model flag unless requested");
+});
+
+test("buildClaudeArgv passes the model override through", () => {
+  const argv = buildClaudeArgv("claude-opus-4-8");
+  assert.equal(argv[argv.indexOf("--model") + 1], "claude-opus-4-8");
 });
 
 test("geminiExtraEnv enables GCA only when no other auth is configured", () => {
