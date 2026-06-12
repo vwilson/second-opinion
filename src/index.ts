@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -120,7 +121,12 @@ function resolveCwd(cwd: string | undefined): string {
   return resolved;
 }
 
-const server = new McpServer({ name: "second-opinion", version: "1.0.0" });
+// resolves to the repo-root package.json from both src/ (dev) and dist/
+const { version } = createRequire(import.meta.url)("../package.json") as {
+  version: string;
+};
+
+const server = new McpServer({ name: "second-opinion", version });
 
 // When the client closes stdin we must exit (so no orphaned server processes
 // linger), but only after in-flight agent calls have settled.

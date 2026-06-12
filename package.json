@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "MCP server exposing the Codex and Gemini CLIs as read-only second-opinion agents for Claude Code",
+  "repository": "github:vwilson/agentmcp",
   "engines": {
     "node": ">=20"
   },
