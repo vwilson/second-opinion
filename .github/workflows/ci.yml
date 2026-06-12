@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu and windows because the CLI discovery and process-kill code
+        # in src/agents.ts branch on platform
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # pin to the minimum supported major (engines.node) so use of
+          # newer-Node APIs fails here instead of on a user's machine
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
