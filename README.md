@@ -15,24 +15,41 @@ stateless; Claude can invoke both tools in parallel.
 
 ## Build
 
-```powershell
+Works on Windows, macOS, and Linux:
+
+```sh
 npm install
 npm run build
 ```
 
 ## Register in Claude Code (user scope, all projects)
 
+Windows:
+
 ```powershell
 claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
 ```
 
+macOS / Linux:
+
+```sh
+claude mcp add --scope user second-opinion -- node /path/to/agentmcp/dist/index.js
+```
+
 ## Prerequisites
 
-- `codex` and `gemini` installed as npm globals and authenticated.
+- `codex` and `gemini` installed as npm globals (`npm i -g @openai/codex
+  @google/gemini-cli`) and authenticated.
   - Gemini: run `gemini` interactively once and complete login (e.g. "Login
     with Google") so cached OAuth credentials exist. Until then `ask_gemini`
     returns the CLI's auth error.
-- If the CLIs are not found automatically (PATH scan + `%APPDATA%\npm`), set
+- The CLIs are discovered automatically:
+  - Windows: PATH scan for the `.cmd` shim (with `node_modules` beside it),
+    plus the `%APPDATA%\npm` fallback.
+  - macOS / Linux: PATH scan for the bare shim, resolving npm's bin symlink
+    to the package's JS entry, with a `<prefix>/lib/node_modules` fallback.
+- If discovery fails (e.g. globals managed by volta or another
+  nonstandard package manager), set
   `AGENTMCP_CODEX_JS` / `AGENTMCP_GEMINI_JS` to the absolute path of each
   CLI's JS entry point.
 
@@ -46,11 +63,13 @@ claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
 - The server keeps long agent calls alive by sending MCP progress
   notifications every 10s. If a client ignores progress, set
   `MCP_TOOL_TIMEOUT=900000` in its environment as a fallback.
-- Codex runs with `-c windows.sandbox="unelevated"`: a user-level
-  `sandbox = "elevated"` config cannot complete its setup when codex runs
-  headless (all shell commands fail with "windows sandbox: spawn setup
-  refresh"). The unelevated sandbox still enforces read-only via a
-  restricted token.
+- On Windows, codex runs with `-c windows.sandbox="unelevated"`: a
+  user-level `sandbox = "elevated"` config cannot complete its setup when
+  codex runs headless (all shell commands fail with "windows sandbox: spawn
+  setup refresh"). The unelevated sandbox still enforces read-only via a
+  restricted token. On macOS/Linux the override is not passed; codex
+  enforces read-only via its platform-native sandbox (e.g. Seatbelt on
+  macOS).
 - Gemini gets two env vars when spawned: `GEMINI_CLI_TRUST_WORKSPACE=true`
   (headless runs cannot complete the interactive folder-trust flow) and
   `GOOGLE_GENAI_USE_GCA=true` (the CLI refuses the stored `oauth-personal`
