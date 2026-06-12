@@ -120,8 +120,6 @@ function makeStreamCollector() {
 
 const entryCache = new Map<string, string>();
 
-const JS_EXTENSIONS = new Set([".js", ".mjs", ".cjs"]);
-
 /**
  * Locate the real JS entry point of an npm-global CLI given its bare shim
  * name (e.g. "codex"). Node >= 20.12 refuses to spawn .cmd shims without
@@ -159,11 +157,16 @@ export function resolveCliEntry(
   if (!isWindows) {
     // npm installs the POSIX global bin as a symlink straight to the
     // package's bin JS (lib/node_modules/<pkg>/bin/*.js); resolving it
-    // needs no layout assumptions at all
+    // works regardless of where the npm prefix lives. Only accept targets
+    // inside the expected package, so a stray same-named symlink earlier on
+    // PATH can't make us run unrelated JS.
+    const expectedSuffixes = pkgRelEntries.map(
+      (rel) => path.sep + path.join("node_modules", ...rel.split("/"))
+    );
     for (const dir of shimDirs) {
       try {
         const target = realpathSync(path.join(dir, shimFile));
-        if (JS_EXTENSIONS.has(path.extname(target)) && existsSync(target)) {
+        if (expectedSuffixes.some((suffix) => target.endsWith(suffix))) {
           entryCache.set(envVar, target);
           return target;
         }
