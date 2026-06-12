@@ -98,8 +98,15 @@ function makeStreamCollector() {
   return {
     push(chunk: string): void {
       if (head.length < STREAM_HEAD_CAP) {
-        head += chunk;
-        return;
+        const room = STREAM_HEAD_CAP - head.length;
+        if (chunk.length <= room) {
+          head += chunk;
+          return;
+        }
+        // Chunk straddles the cap: keep the part that fits in head, and let
+        // the overflow fall through into the rolling tail buffer below.
+        head += chunk.slice(0, room);
+        chunk = chunk.slice(room);
       }
       tail.push(chunk);
       tailLen += chunk.length;
