@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -120,10 +120,13 @@ function makeStreamCollector() {
 
 const entryCache = new Map<string, string>();
 
+const JS_EXTENSIONS = new Set([".js", ".mjs", ".cjs"]);
+
 /**
- * Locate the real JS entry point of an npm-global CLI. Node >= 20.12 refuses
- * to spawn .cmd shims without shell:true, and shell:true breaks argument
- * quoting, so we run `node <entry.js>` directly instead.
+ * Locate the real JS entry point of an npm-global CLI given its bare shim
+ * name (e.g. "codex"). Node >= 20.12 refuses to spawn .cmd shims without
+ * shell:true, and shell:true breaks argument quoting, so we run
+ * `node <entry.js>` directly instead.
  */
 export function resolveCliEntry(
   shimName: string,
@@ -144,16 +147,48 @@ export function resolveCliEntry(
     return override;
   }
 
+  const isWindows = process.platform === "win32";
+  const shimFile = isWindows ? `${shimName}.cmd` : shimName;
   const pathDirs = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(Boolean);
+  const shimDirs = pathDirs.filter((dir) =>
+    existsSync(path.join(dir, shimFile))
+  );
+
+  if (!isWindows) {
+    // npm installs the POSIX global bin as a symlink straight to the
+    // package's bin JS (lib/node_modules/<pkg>/bin/*.js); resolving it
+    // needs no layout assumptions at all
+    for (const dir of shimDirs) {
+      try {
+        const target = realpathSync(path.join(dir, shimFile));
+        if (JS_EXTENSIONS.has(path.extname(target)) && existsSync(target)) {
+          entryCache.set(envVar, target);
+          return target;
+        }
+      } catch {
+        // symlink loop, permissions, etc.; fall through to the layout search
+      }
+    }
+  }
+
   const appData = process.env.APPDATA;
   const moduleRoots = [
-    // npm invariant: the global shim sits beside the global node_modules
-    ...pathDirs
-      .filter((dir) => existsSync(path.join(dir, shimName)))
-      .map((dir) => path.join(dir, "node_modules")),
-    ...(appData ? [path.join(appData, "npm", "node_modules")] : []),
+    ...shimDirs.flatMap((dir) =>
+      isWindows
+        ? // Windows npm invariant: the global shim sits beside node_modules
+          [path.join(dir, "node_modules")]
+        : // POSIX npm prefix layout: shim in <prefix>/bin, packages in
+          // <prefix>/lib/node_modules
+          [
+            path.join(dir, "..", "lib", "node_modules"),
+            path.join(dir, "node_modules"),
+          ]
+    ),
+    ...(isWindows && appData
+      ? [path.join(appData, "npm", "node_modules")]
+      : []),
   ];
   for (const root of moduleRoots) {
     for (const rel of pkgRelEntries) {
@@ -165,10 +200,14 @@ export function resolveCliEntry(
     }
   }
 
+  const searched = isWindows
+    ? "PATH or under %APPDATA%\\npm"
+    : "PATH or the npm global prefix";
   throw new Error(
-    `Could not locate ${shimName} on PATH or under %APPDATA%\\npm. ` +
-      `Is the CLI installed globally via npm? You can also set ${envVar} ` +
-      `to the absolute path of the CLI's JS entry point (${pkgRelEntries[0]}).`
+    `Could not locate ${shimFile} on ${searched}. ` +
+      `Is the CLI installed globally via npm (npm i -g)? You can also set ` +
+      `${envVar} to the absolute path of the CLI's JS entry point ` +
+      `(${pkgRelEntries[0]}).`
   );
 }
 

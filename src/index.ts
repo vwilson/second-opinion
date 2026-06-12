@@ -182,7 +182,7 @@ server.registerTool(
     let cwd: string;
     try {
       entry = resolveCliEntry(
-        "codex.cmd",
+        "codex",
         ["@openai/codex/bin/codex.js"],
         "AGENTMCP_CODEX_JS"
       );
@@ -197,9 +197,12 @@ server.registerTool(
       "--skip-git-repo-check",
       // a user-level `windows.sandbox = "elevated"` setting cannot complete its
       // setup when codex runs headless ("spawn setup refresh" exec errors);
-      // unelevated still enforces read-only via a restricted token
-      "-c",
-      'windows.sandbox="unelevated"',
+      // unelevated still enforces read-only via a restricted token. On POSIX
+      // codex uses its platform-native sandbox, so the override is
+      // Windows-only.
+      ...(process.platform === "win32"
+        ? ["-c", 'windows.sandbox="unelevated"']
+        : []),
       "-s",
       "read-only",
       "--color",
@@ -260,7 +263,7 @@ server.registerTool(
     let cwd: string;
     try {
       entry = resolveCliEntry(
-        "gemini.cmd",
+        "gemini",
         [
           "@google/gemini-cli/bundle/gemini.js",
           "@google/gemini-cli/dist/index.js",
