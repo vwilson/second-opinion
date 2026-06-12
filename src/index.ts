@@ -1,20 +1,30 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import {
   cleanGeminiOutput,
   killAllAgents,
   readFileCapped,
-  resolveCliEntry,
   runAgent,
   truncateMiddle,
   type AgentResult,
 } from "./agents.js";
+import {
+  buildCodexArgv,
+  buildGeminiArgv,
+  geminiExtraEnv,
+  newCodexOutFile,
+  resolveCodexEntry,
+  resolveGeminiEntry,
+} from "./clis.js";
+
+if (process.argv.includes("--doctor")) {
+  const { runDoctor } = await import("./doctor.js");
+  process.exit(await runDoctor());
+}
 
 const sharedShape = {
   prompt: z
@@ -120,7 +130,12 @@ function resolveCwd(cwd: string | undefined): string {
   return resolved;
 }
 
-const server = new McpServer({ name: "second-opinion", version: "1.0.0" });
+// resolves to the repo-root package.json from both src/ (dev) and dist/
+const { version } = createRequire(import.meta.url)("../package.json") as {
+  version: string;
+};
+
+const server = new McpServer({ name: "second-opinion", version });
 
 // When the client closes stdin we must exit (so no orphaned server processes
 // linger), but only after in-flight agent calls have settled.
@@ -168,40 +183,14 @@ server.registerTool(
     let entry: string;
     let cwd: string;
     try {
-      entry = resolveCliEntry(
-        "codex",
-        ["@openai/codex/bin/codex.js"],
-        "AGENTMCP_CODEX_JS"
-      );
+      entry = resolveCodexEntry();
       cwd = resolveCwd(args.cwd);
     } catch (err) {
       return textResult(String(err instanceof Error ? err.message : err), true);
     }
 
-    const tmpOut = path.join(os.tmpdir(), `agentmcp-codex-${randomUUID()}.txt`);
-    const argv = [
-      "exec",
-      "--skip-git-repo-check",
-      // a user-level `windows.sandbox = "elevated"` setting cannot complete its
-      // setup when codex runs headless ("spawn setup refresh" exec errors);
-      // unelevated still enforces read-only via a restricted token. On POSIX
-      // codex uses its platform-native sandbox, so the override is
-      // Windows-only.
-      ...(process.platform === "win32"
-        ? ["-c", 'windows.sandbox="unelevated"']
-        : []),
-      "-s",
-      "read-only",
-      "--color",
-      "never",
-      "--ephemeral",
-      "-C",
-      cwd,
-      ...(args.model ? ["-m", args.model] : []),
-      "-o",
-      tmpOut,
-      "-",
-    ];
+    const tmpOut = newCodexOutFile();
+    const argv = buildCodexArgv(cwd, tmpOut, args.model);
 
     try {
       const result = await runAgent({
@@ -249,38 +238,14 @@ server.registerTool(
     let entry: string;
     let cwd: string;
     try {
-      entry = resolveCliEntry(
-        "gemini",
-        [
-          "@google/gemini-cli/bundle/gemini.js",
-          "@google/gemini-cli/dist/index.js",
-        ],
-        "AGENTMCP_GEMINI_JS"
-      );
+      entry = resolveGeminiEntry();
       cwd = resolveCwd(args.cwd);
     } catch (err) {
       return textResult(String(err instanceof Error ? err.message : err), true);
     }
 
-    const argv = [
-      ...(args.model ? ["-m", args.model] : []),
-      "--approval-mode",
-      "default",
-    ];
-
-    // headless gemini cannot run the interactive folder-trust flow
-    const extraEnv: Record<string, string> = {
-      GEMINI_CLI_TRUST_WORKSPACE: "true",
-    };
-    // the CLI refuses the stored oauth-personal auth type when headless;
-    // GOOGLE_GENAI_USE_GCA routes it to the same cached Google login. Skip
-    // when another auth method is already configured in the environment.
-    if (
-      !process.env.GEMINI_API_KEY &&
-      !process.env.GOOGLE_GENAI_USE_VERTEXAI
-    ) {
-      extraEnv.GOOGLE_GENAI_USE_GCA = "true";
-    }
+    const argv = buildGeminiArgv(args.model);
+    const extraEnv = geminiExtraEnv();
 
     const result = await runAgent({
       entry,

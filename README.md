@@ -79,4 +79,9 @@ claude mcp add --scope user second-opinion -- node /path/to/agentmcp/dist/index.
 - After editing `src/`, run `npm run build`; Claude Code picks up the new
   build the next time it starts the server (`/mcp` → reconnect, or restart
   the session).
+- Health check: `npm run doctor` (or `node dist/index.js --doctor`) resolves
+  both CLIs and runs a one-line prompt through each from a neutral directory,
+  printing the resolved entry paths and pass/fail with stderr on failure.
+  Useful after install, after re-authenticating, or when a tool starts
+  erroring mid-conversation.
 - Debugging: `npm run inspect` opens the MCP Inspector against the server.

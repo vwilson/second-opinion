@@ -72,13 +72,16 @@ export async function readFileCapped(filePath: string): Promise<string> {
   try {
     const head = Buffer.alloc(FILE_HEAD_BYTES);
     const tail = Buffer.alloc(FILE_TAIL_BYTES);
-    await fh.read(head, 0, FILE_HEAD_BYTES, 0);
-    await fh.read(tail, 0, FILE_TAIL_BYTES, size - FILE_TAIL_BYTES);
-    const omitted = size - FILE_HEAD_BYTES - FILE_TAIL_BYTES;
+    // regular-file reads normally fill the buffer, but short reads are legal
+    // (e.g. the file shrank after stat), so slice to what was actually read
+    // rather than decoding zero padding into the result
+    const headRead = await fh.read(head, 0, FILE_HEAD_BYTES, 0);
+    const tailRead = await fh.read(tail, 0, FILE_TAIL_BYTES, size - FILE_TAIL_BYTES);
+    const omitted = size - headRead.bytesRead - tailRead.bytesRead;
     return (
-      head.toString("utf8") +
+      head.toString("utf8", 0, headRead.bytesRead) +
       `\n\n[... ${omitted} bytes omitted ...]\n\n` +
-      tail.toString("utf8")
+      tail.toString("utf8", 0, tailRead.bytesRead)
     );
   } finally {
     await fh.close();

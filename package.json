@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "MCP server exposing the Codex and Gemini CLIs as read-only second-opinion agents for Claude Code",
+  "repository": "github:vwilson/agentmcp",
   "engines": {
     "node": ">=20"
   },
@@ -12,6 +13,7 @@
     "pretest": "npm run build",
     "test": "node --test",
     "start": "node dist/index.js",
+    "doctor": "node dist/index.js --doctor",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
   },
   "dependencies": {
