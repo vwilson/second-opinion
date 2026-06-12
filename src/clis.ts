@@ -1,0 +1,81 @@
+import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { resolveCliEntry } from "./agents.js";
+
+/** Locate the codex CLI's JS entry point. */
+export function resolveCodexEntry(): string {
+  return resolveCliEntry(
+    "codex",
+    ["@openai/codex/bin/codex.js"],
+    "AGENTMCP_CODEX_JS"
+  );
+}
+
+/** Locate the gemini CLI's JS entry point. */
+export function resolveGeminiEntry(): string {
+  return resolveCliEntry(
+    "gemini",
+    [
+      "@google/gemini-cli/bundle/gemini.js",
+      "@google/gemini-cli/dist/index.js",
+    ],
+    "AGENTMCP_GEMINI_JS"
+  );
+}
+
+/** A unique temp file for codex's -o (last agent message) output. */
+export function newCodexOutFile(): string {
+  return path.join(os.tmpdir(), `agentmcp-codex-${randomUUID()}.txt`);
+}
+
+export function buildCodexArgv(
+  cwd: string,
+  outFile: string,
+  model?: string
+): string[] {
+  return [
+    "exec",
+    "--skip-git-repo-check",
+    // a user-level `windows.sandbox = "elevated"` setting cannot complete its
+    // setup when codex runs headless ("spawn setup refresh" exec errors);
+    // unelevated still enforces read-only via a restricted token. On POSIX
+    // codex uses its platform-native sandbox, so the override is
+    // Windows-only.
+    ...(process.platform === "win32"
+      ? ["-c", 'windows.sandbox="unelevated"']
+      : []),
+    "-s",
+    "read-only",
+    "--color",
+    "never",
+    "--ephemeral",
+    "-C",
+    cwd,
+    ...(model ? ["-m", model] : []),
+    "-o",
+    outFile,
+    "-",
+  ];
+}
+
+export function buildGeminiArgv(model?: string): string[] {
+  return [...(model ? ["-m", model] : []), "--approval-mode", "default"];
+}
+
+export function geminiExtraEnv(
+  env: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  // headless gemini cannot run the interactive folder-trust flow
+  const extraEnv: Record<string, string> = {
+    GEMINI_CLI_TRUST_WORKSPACE: "true",
+  };
+  // the CLI refuses the stored oauth-personal auth type when headless;
+  // GOOGLE_GENAI_USE_GCA routes it to the same cached Google login. Skip
+  // when another auth method is already configured in the environment.
+  if (!env.GEMINI_API_KEY && !env.GOOGLE_GENAI_USE_VERTEXAI) {
+    extraEnv.GOOGLE_GENAI_USE_GCA = "true";
+  }
+  return extraEnv;
+}
