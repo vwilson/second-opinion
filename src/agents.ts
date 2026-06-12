@@ -30,9 +30,11 @@ const POST_KILL_GRACE_MS = 5_000;
 
 // OSC (with payload, BEL- or ST-terminated), CSI, and remaining two-character
 // ESC sequences. DCS/PM/APC payloads are not covered, but NO_COLOR is set on
-// the children so escapes should be rare to begin with.
+// the children so escapes should be rare to begin with. The OSC terminator is
+// mandatory: an unterminated `ESC ]` (quoted by the agent, or cut by the
+// stream cap) is left intact rather than stripped through real output.
 const ANSI_RE = new RegExp(
-  "\\x1B\\][^\\x07\\x1B]*(?:\\x07|\\x1B\\\\)?" +
+  "\\x1B\\][^\\x07\\x1B]*(?:\\x07|\\x1B\\\\)" +
     "|\\x1B\\[[0-?]*[ -/]*[@-~]" +
     "|\\x1B[@-Z\\\\^_]",
   "g"
@@ -179,10 +181,16 @@ export async function killAllAgents(): Promise<void> {
 
 async function killTree(pid: number): Promise<void> {
   if (process.platform !== "win32") {
+    // agents are spawned detached (own process group) on POSIX, so a group
+    // signal reaches their helper processes too
     try {
-      process.kill(pid, "SIGKILL");
+      process.kill(-pid, "SIGKILL");
     } catch {
-      // already gone
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
     }
     return;
   }
@@ -203,6 +211,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
       cwd: opts.cwd,
       shell: false,
       windowsHide: true,
+      // own process group on POSIX so killTree can signal the whole tree
+      detached: process.platform !== "win32",
       env: { ...process.env, NO_COLOR: "1", ...opts.extraEnv },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -215,7 +225,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
     const pid = child.pid;
     if (pid !== undefined) {
       liveChildren.add(pid);
-      child.on("close", () => liveChildren.delete(pid));
+      // 'exit', not 'close': a grandchild holding the stdio pipes can delay
+      // 'close' indefinitely, leaving a dead (reusable) PID in the live set
+      child.on("exit", () => liveChildren.delete(pid));
       child.on("error", () => liveChildren.delete(pid));
     }
 
