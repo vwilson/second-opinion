@@ -30,8 +30,8 @@ claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
 
 - `codex` and `gemini` installed as npm globals and authenticated.
   - Gemini: run `gemini` interactively once and complete login (e.g. "Login
-    with Google") so non-interactive mode has a stored auth method. Until
-    then `ask_gemini` returns the CLI's auth error.
+    with Google") so cached OAuth credentials exist. Until then `ask_gemini`
+    returns the CLI's auth error.
 - If the CLIs are not found automatically (PATH scan + `%APPDATA%\npm`), set
   `AGENTMCP_CODEX_JS` / `AGENTMCP_GEMINI_JS` to the absolute path of each
   CLI's JS entry point.
@@ -46,6 +46,12 @@ claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
   headless (all shell commands fail with "windows sandbox: spawn setup
   refresh"). The unelevated sandbox still enforces read-only via a
   restricted token.
+- Gemini gets two env vars when spawned: `GEMINI_CLI_TRUST_WORKSPACE=true`
+  (headless runs cannot complete the interactive folder-trust flow) and
+  `GOOGLE_GENAI_USE_GCA=true` (the CLI refuses the stored `oauth-personal`
+  auth type when headless; this routes it to the same cached Google login).
+  The latter is skipped if `GEMINI_API_KEY` or `GOOGLE_GENAI_USE_VERTEXAI`
+  is already set.
 - After editing `src/`, run `npm run build`; Claude Code picks up the new
   build the next time it starts the server (`/mcp` → reconnect, or restart
   the session).

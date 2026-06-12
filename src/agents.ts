@@ -9,6 +9,7 @@ export interface AgentRunOptions {
   prompt: string;
   cwd: string;
   timeoutMs: number;
+  extraEnv?: Record<string, string>;
   onProgress: (elapsedSec: number) => Promise<void>;
 }
 
@@ -53,7 +54,7 @@ const entryCache = new Map<string, string>();
  */
 export function resolveCliEntry(
   shimName: string,
-  pkgRelEntry: string,
+  pkgRelEntries: string[],
   envVar: string
 ): string {
   const cached = entryCache.get(envVar);
@@ -70,33 +71,31 @@ export function resolveCliEntry(
     return override;
   }
 
-  const relParts = pkgRelEntry.split("/");
   const pathDirs = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(Boolean);
-  for (const dir of pathDirs) {
-    if (!existsSync(path.join(dir, shimName))) continue;
-    // npm invariant: the global shim sits beside the global node_modules
-    const entry = path.join(dir, "node_modules", ...relParts);
-    if (existsSync(entry)) {
-      entryCache.set(envVar, entry);
-      return entry;
-    }
-  }
-
   const appData = process.env.APPDATA;
-  if (appData) {
-    const fallback = path.join(appData, "npm", "node_modules", ...relParts);
-    if (existsSync(fallback)) {
-      entryCache.set(envVar, fallback);
-      return fallback;
+  const moduleRoots = [
+    // npm invariant: the global shim sits beside the global node_modules
+    ...pathDirs
+      .filter((dir) => existsSync(path.join(dir, shimName)))
+      .map((dir) => path.join(dir, "node_modules")),
+    ...(appData ? [path.join(appData, "npm", "node_modules")] : []),
+  ];
+  for (const root of moduleRoots) {
+    for (const rel of pkgRelEntries) {
+      const entry = path.join(root, ...rel.split("/"));
+      if (existsSync(entry)) {
+        entryCache.set(envVar, entry);
+        return entry;
+      }
     }
   }
 
   throw new Error(
     `Could not locate ${shimName} on PATH or under %APPDATA%\\npm. ` +
       `Is the CLI installed globally via npm? You can also set ${envVar} ` +
-      `to the absolute path of the CLI's JS entry point (${pkgRelEntry}).`
+      `to the absolute path of the CLI's JS entry point (${pkgRelEntries[0]}).`
   );
 }
 
@@ -126,7 +125,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
       cwd: opts.cwd,
       shell: false,
       windowsHide: true,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", ...opts.extraEnv },
       stdio: ["pipe", "pipe", "pipe"],
     });
 

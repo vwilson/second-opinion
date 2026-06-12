@@ -112,7 +112,11 @@ function resolveCwd(cwd: string | undefined): string {
   return resolved;
 }
 
-const GEMINI_NOISE = [/^Loaded cached credentials\.\s*$/];
+const GEMINI_NOISE = [
+  /^Loaded cached credentials\.\s*$/,
+  /^Warning: 256-color support not detected\./,
+  /^Ripgrep is not available\. Falling back to GrepTool\.\s*$/,
+];
 
 function cleanGeminiOutput(stdout: string): string {
   return stdout
@@ -172,7 +176,7 @@ server.registerTool(
     try {
       entry = resolveCliEntry(
         "codex.cmd",
-        "@openai/codex/bin/codex.js",
+        ["@openai/codex/bin/codex.js"],
         "AGENTMCP_CODEX_JS"
       );
       cwd = resolveCwd(args.cwd);
@@ -248,7 +252,10 @@ server.registerTool(
     try {
       entry = resolveCliEntry(
         "gemini.cmd",
-        "@google/gemini-cli/dist/index.js",
+        [
+          "@google/gemini-cli/bundle/gemini.js",
+          "@google/gemini-cli/dist/index.js",
+        ],
         "AGENTMCP_GEMINI_JS"
       );
       cwd = resolveCwd(args.cwd);
@@ -262,12 +269,27 @@ server.registerTool(
       "default",
     ];
 
+    // headless gemini cannot run the interactive folder-trust flow
+    const extraEnv: Record<string, string> = {
+      GEMINI_CLI_TRUST_WORKSPACE: "true",
+    };
+    // the CLI refuses the stored oauth-personal auth type when headless;
+    // GOOGLE_GENAI_USE_GCA routes it to the same cached Google login. Skip
+    // when another auth method is already configured in the environment.
+    if (
+      !process.env.GEMINI_API_KEY &&
+      !process.env.GOOGLE_GENAI_USE_VERTEXAI
+    ) {
+      extraEnv.GOOGLE_GENAI_USE_GCA = "true";
+    }
+
     const result = await runAgent({
       entry,
       argv,
       prompt: args.prompt,
       cwd,
       timeoutMs: args.timeout_seconds * 1000,
+      extraEnv,
       onProgress: makeProgressReporter("gemini", extra as HandlerExtra),
     });
     if (!result.ok) return errorResult("gemini", result);
