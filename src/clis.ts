@@ -69,6 +69,9 @@ export function buildClaudeArgv(model?: string): string[] {
     "-p",
     "--output-format",
     "text",
+    // one-shot means one-shot: don't save the prompt/transcript to the
+    // user's session state (the ask_codex equivalent is --ephemeral)
+    "--no-session-persistence",
     // don't load the user's MCP servers: faster startup, and this server is
     // typically registered at user scope, so loading them would recurse
     // into ourselves

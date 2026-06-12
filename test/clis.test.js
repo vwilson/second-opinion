@@ -56,6 +56,10 @@ test("buildClaudeArgv produces an isolated read-only print invocation", () => {
   assert.equal(argv[0], "-p");
   assert.equal(argv[argv.indexOf("--output-format") + 1], "text");
   assert.ok(argv.includes("--strict-mcp-config"), "must not load MCP servers");
+  assert.ok(
+    argv.includes("--no-session-persistence"),
+    "must not save the transcript to the user's session state"
+  );
   assert.equal(
     argv[argv.indexOf("--setting-sources") + 1],
     "",

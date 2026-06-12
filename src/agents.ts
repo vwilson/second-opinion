@@ -253,9 +253,28 @@ const CLAUDE_ENV_VAR = "AGENTMCP_CLAUDE_CLI";
 let claudeCliCache: CliCommand | undefined;
 
 function asCliCommand(target: string): CliCommand {
-  return target.endsWith(".js") || target.endsWith(".mjs")
-    ? { command: process.execPath, prefixArgs: [target] }
-    : { command: target, prefixArgs: [] };
+  const lower = target.toLowerCase();
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
+    return { command: process.execPath, prefixArgs: [target] };
+  }
+  // .cmd shims can't be spawned with shell:false on Node >= 20.12; resolve
+  // the npm package entry that lives beside the shim instead
+  if (lower.endsWith(".cmd")) {
+    const entry = path.join(
+      path.dirname(target),
+      "node_modules",
+      ...CLAUDE_PKG_ENTRY.split("/")
+    );
+    if (existsSync(entry)) {
+      return { command: process.execPath, prefixArgs: [entry] };
+    }
+    throw new Error(
+      `${CLAUDE_ENV_VAR} points at a .cmd shim ("${target}") with no ` +
+        `adjacent node_modules${path.sep}${CLAUDE_PKG_ENTRY.replaceAll("/", path.sep)}. ` +
+        `Set it to the CLI's JS entry point or native executable instead.`
+    );
+  }
+  return { command: target, prefixArgs: [] };
 }
 
 /**
