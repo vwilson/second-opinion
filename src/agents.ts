@@ -225,9 +225,17 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
     const pid = child.pid;
     if (pid !== undefined) {
       liveChildren.add(pid);
-      // 'exit', not 'close': a grandchild holding the stdio pipes can delay
-      // 'close' indefinitely, leaving a dead (reusable) PID in the live set
-      child.on("exit", () => liveChildren.delete(pid));
+      if (process.platform === "win32") {
+        // prune at 'exit': taskkill /T walks the tree from the root, so a
+        // dead root PID is useless for cleanup and could be reused by an
+        // unrelated process while a grandchild delays 'close'
+        child.on("exit", () => liveChildren.delete(pid));
+      } else {
+        // prune at 'close': the PID doubles as the detached process group
+        // id, which cannot be reused while any group member survives, so
+        // keeping it lets shutdown kill stragglers that outlive the leader
+        child.on("close", () => liveChildren.delete(pid));
+      }
       child.on("error", () => liveChildren.delete(pid));
     }
 
