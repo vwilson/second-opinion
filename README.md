@@ -1,13 +1,13 @@
 # agentmcp — second-opinion MCP server
 
 An MCP (stdio) server for Claude Code that exposes the locally installed
-**OpenAI Codex CLI** and **Google Gemini CLI** as read-only "second opinion"
+**OpenAI Codex CLI** and **Google Gemini CLI** as one-shot "second opinion"
 agents:
 
-| Tool         | What it does                                                          |
-| ------------ | --------------------------------------------------------------------- |
-| `ask_codex`  | One-shot question to `codex exec` (read-only sandbox, no file edits)  |
-| `ask_gemini` | One-shot question to `gemini` non-interactive mode (default approvals) |
+| Tool         | What it does                                                            |
+| ------------ | ----------------------------------------------------------------------- |
+| `ask_codex`  | One-shot question to `codex exec` (read-only sandbox, no file edits)    |
+| `ask_gemini` | One-shot question to `gemini` non-interactive mode (writes auto-denied) |
 
 Both tools take `prompt` (required), `cwd` (project root the agent may read),
 `model` (optional override), and `timeout_seconds` (default 600). Calls are
@@ -38,6 +38,11 @@ claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
 
 ## Notes
 
+- Only `ask_codex` is sandboxed read-only (restricted token). `ask_gemini` is
+  read-only by policy: non-interactive default approval mode auto-denies file
+  edits and shell commands, but there is no OS sandbox and Gemini's network
+  tools (web fetch, Google Search) remain available — don't point it at
+  directories containing secrets.
 - The server keeps long agent calls alive by sending MCP progress
   notifications every 10s. If a client ignores progress, set
   `MCP_TOOL_TIMEOUT=900000` in its environment as a fallback.

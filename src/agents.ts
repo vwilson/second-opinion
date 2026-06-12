@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { open, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -22,12 +23,20 @@ export interface AgentResult {
   durationMs: number;
 }
 
-const STREAM_CAP = 5 * 1024 * 1024;
+const STREAM_HEAD_CAP = 2_500_000;
+const STREAM_TAIL_CAP = 2_500_000;
 const PROGRESS_INTERVAL_MS = 10_000;
 const POST_KILL_GRACE_MS = 5_000;
 
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+// OSC (with payload, BEL- or ST-terminated), CSI, and remaining two-character
+// ESC sequences. DCS/PM/APC payloads are not covered, but NO_COLOR is set on
+// the children so escapes should be rare to begin with.
+const ANSI_RE = new RegExp(
+  "\\x1B\\][^\\x07\\x1B]*(?:\\x07|\\x1B\\\\)?" +
+    "|\\x1B\\[[0-?]*[ -/]*[@-~]" +
+    "|\\x1B[@-Z\\\\^_]",
+  "g"
+);
 
 export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, "");
@@ -35,7 +44,7 @@ export function stripAnsi(s: string): string {
 
 export function truncateMiddle(s: string, max = 50_000): string {
   if (s.length <= max) return s;
-  const headLen = 20_000;
+  const headLen = Math.floor(max * 0.4);
   const tailLen = max - headLen;
   const omitted = s.length - headLen - tailLen;
   return (
@@ -43,6 +52,68 @@ export function truncateMiddle(s: string, max = 50_000): string {
     `\n\n[... ${omitted} characters omitted ...]\n\n` +
     s.slice(-tailLen)
   );
+}
+
+const FILE_READ_CAP = 5 * 1024 * 1024;
+const FILE_HEAD_BYTES = 256 * 1024;
+const FILE_TAIL_BYTES = 256 * 1024;
+
+/**
+ * Read a UTF-8 text file with bounded memory: files over FILE_READ_CAP are
+ * read as head + tail only (a multi-byte char split at a read boundary
+ * degrades to a replacement char, which is fine for truncated output).
+ */
+export async function readFileCapped(filePath: string): Promise<string> {
+  const { size } = await stat(filePath);
+  if (size <= FILE_READ_CAP) return readFile(filePath, "utf8");
+  const fh = await open(filePath, "r");
+  try {
+    const head = Buffer.alloc(FILE_HEAD_BYTES);
+    const tail = Buffer.alloc(FILE_TAIL_BYTES);
+    await fh.read(head, 0, FILE_HEAD_BYTES, 0);
+    await fh.read(tail, 0, FILE_TAIL_BYTES, size - FILE_TAIL_BYTES);
+    const omitted = size - FILE_HEAD_BYTES - FILE_TAIL_BYTES;
+    return (
+      head.toString("utf8") +
+      `\n\n[... ${omitted} bytes omitted ...]\n\n` +
+      tail.toString("utf8")
+    );
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Collects a stream with bounded memory: the first STREAM_HEAD_CAP chars are
+ * kept verbatim, then a rolling buffer keeps the last STREAM_TAIL_CAP chars,
+ * so the end of the stream (final answers, fatal errors) always survives.
+ */
+function makeStreamCollector() {
+  let head = "";
+  const tail: string[] = [];
+  let tailLen = 0;
+  let dropped = 0;
+  return {
+    push(chunk: string): void {
+      if (head.length < STREAM_HEAD_CAP) {
+        head += chunk;
+        return;
+      }
+      tail.push(chunk);
+      tailLen += chunk.length;
+      while (tail.length > 1 && tailLen - tail[0].length >= STREAM_TAIL_CAP) {
+        tailLen -= tail[0].length;
+        dropped += tail[0].length;
+        tail.shift();
+      }
+    },
+    read(): string {
+      const joined = tail.join("");
+      return dropped > 0
+        ? `${head}\n[... ${dropped} characters dropped ...]\n${joined}`
+        : head + joined;
+    },
+  };
 }
 
 const entryCache = new Map<string, string>();
@@ -99,6 +170,13 @@ export function resolveCliEntry(
   );
 }
 
+const liveChildren = new Set<number>();
+
+/** Kill every agent process tree still running (used at server shutdown). */
+export async function killAllAgents(): Promise<void> {
+  await Promise.all([...liveChildren].map((pid) => killTree(pid)));
+}
+
 async function killTree(pid: number): Promise<void> {
   if (process.platform !== "win32") {
     try {
@@ -129,19 +207,22 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    let stdout = "";
-    let stderr = "";
+    const stdoutCol = makeStreamCollector();
+    const stderrCol = makeStreamCollector();
     let timedOut = false;
     let settled = false;
 
+    const pid = child.pid;
+    if (pid !== undefined) {
+      liveChildren.add(pid);
+      child.on("close", () => liveChildren.delete(pid));
+      child.on("error", () => liveChildren.delete(pid));
+    }
+
     child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      if (stdout.length < STREAM_CAP) stdout += chunk;
-    });
+    child.stdout.on("data", (chunk: string) => stdoutCol.push(chunk));
     child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < STREAM_CAP) stderr += chunk;
-    });
+    child.stderr.on("data", (chunk: string) => stderrCol.push(chunk));
 
     // EPIPE guard: the CLI may exit before consuming stdin
     child.stdin.on("error", () => {});
@@ -160,10 +241,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
       clearTimeout(killTimer);
       resolve({
         ok: !timedOut && exitCode === 0,
-        output: stripAnsi(stdout),
+        output: stripAnsi(stdoutCol.read()),
         exitCode,
         timedOut,
-        stderrTail: stripAnsi(stderr).slice(-2_000),
+        stderrTail: stripAnsi(stderrCol.read()).slice(-2_000),
         durationMs: Date.now() - start,
       });
     };
@@ -176,7 +257,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
     }, opts.timeoutMs);
 
     child.on("error", (err) => {
-      stderr += `\nspawn error: ${err.message}`;
+      stderrCol.push(`\nspawn error: ${err.message}`);
       settle(null);
     });
     // 'close' (not 'exit') so stdout/stderr are fully flushed
