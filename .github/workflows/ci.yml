@@ -30,4 +30,5 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build
+      # pretest runs the build, so this covers compile + tests
+      - run: npm test
