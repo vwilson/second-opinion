@@ -1,18 +1,18 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
+  type AgentResult,
+  type CliCommand,
   cleanGeminiOutput,
   killAllAgents,
   readFileCapped,
   resolveClaudeCli,
   runAgent,
   truncateMiddle,
-  type AgentResult,
-  type CliCommand,
 } from "./agents.js";
 import {
   buildClaudeArgv,
@@ -50,7 +50,7 @@ const sharedShape = {
     .string()
     // a leading dash could smuggle a CLI flag (e.g. --yolo) into the argv
     .regex(
-      /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/,
+      /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/,
       "model must be a plain model id (letters, digits, . _ : / -; no leading dash)"
     )
     .optional()
@@ -112,7 +112,10 @@ function textResult(text: string, isError = false) {
   return { content: [{ type: "text" as const, text }], isError };
 }
 
-function errorResult(label: string, result: AgentResult): ReturnType<typeof textResult> {
+function errorResult(
+  label: string,
+  result: AgentResult
+): ReturnType<typeof textResult> {
   const seconds = Math.round(result.durationMs / 1000);
   const reason = result.timedOut
     ? `timed out after ${seconds}s and was killed`

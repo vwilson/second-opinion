@@ -1,13 +1,13 @@
 import { rm } from "node:fs/promises";
 import os from "node:os";
 import {
+  type AgentResult,
+  type CliCommand,
   cleanGeminiOutput,
   killAllAgents,
   readFileCapped,
   resolveClaudeCli,
   runAgent,
-  type AgentResult,
-  type CliCommand,
 } from "./agents.js";
 import {
   buildClaudeArgv,
@@ -73,7 +73,11 @@ async function checkCodex(cwd: string): Promise<DoctorReport> {
     });
     const lines = [`entry: ${entry}`];
     if (!result.ok) {
-      return { name: "codex", ok: false, lines: [...lines, ...failureLines(result)] };
+      return {
+        name: "codex",
+        ok: false,
+        lines: [...lines, ...failureLines(result)],
+      };
     }
     let answer = "";
     try {
@@ -82,7 +86,11 @@ async function checkCodex(cwd: string): Promise<DoctorReport> {
       // fall back to stdout below
     }
     if (!answer) answer = result.output.trim();
-    return { name: "codex", ok: true, lines: [...lines, okLine(result, answer)] };
+    return {
+      name: "codex",
+      ok: true,
+      lines: [...lines, okLine(result, answer)],
+    };
   } finally {
     await rm(outFile, { force: true });
   }
@@ -106,10 +114,18 @@ async function checkGemini(cwd: string): Promise<DoctorReport> {
   });
   const lines = [`entry: ${entry}`];
   if (!result.ok) {
-    return { name: "gemini", ok: false, lines: [...lines, ...failureLines(result)] };
+    return {
+      name: "gemini",
+      ok: false,
+      lines: [...lines, ...failureLines(result)],
+    };
   }
   const answer = cleanGeminiOutput(result.output);
-  return { name: "gemini", ok: true, lines: [...lines, okLine(result, answer)] };
+  return {
+    name: "gemini",
+    ok: true,
+    lines: [...lines, okLine(result, answer)],
+  };
 }
 
 async function checkClaude(cwd: string): Promise<DoctorReport> {
@@ -129,9 +145,17 @@ async function checkClaude(cwd: string): Promise<DoctorReport> {
   });
   const lines = [`entry: ${[cli.command, ...cli.prefixArgs].join(" ")}`];
   if (!result.ok) {
-    return { name: "claude", ok: false, lines: [...lines, ...failureLines(result)] };
+    return {
+      name: "claude",
+      ok: false,
+      lines: [...lines, ...failureLines(result)],
+    };
   }
-  return { name: "claude", ok: true, lines: [...lines, okLine(result, result.output)] };
+  return {
+    name: "claude",
+    ok: true,
+    lines: [...lines, okLine(result, result.output)],
+  };
 }
 
 /**

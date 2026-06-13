@@ -17,10 +17,7 @@ export function resolveCodexEntry(): string {
 export function resolveGeminiEntry(): string {
   return resolveCliEntry(
     "gemini",
-    [
-      "@google/gemini-cli/bundle/gemini.js",
-      "@google/gemini-cli/dist/index.js",
-    ],
+    ["@google/gemini-cli/bundle/gemini.js", "@google/gemini-cli/dist/index.js"],
     "AGENTMCP_GEMINI_JS"
   );
 }
