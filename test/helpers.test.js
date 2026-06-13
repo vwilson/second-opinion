@@ -5,14 +5,14 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  cleanGeminiOutput,
   FILE_HEAD_BYTES,
   FILE_READ_CAP,
   FILE_TAIL_BYTES,
-  STREAM_HEAD_CAP,
-  STREAM_TAIL_CAP,
-  cleanGeminiOutput,
   makeStreamCollector,
   readFileCapped,
+  STREAM_HEAD_CAP,
+  STREAM_TAIL_CAP,
   stripAnsi,
   truncateMiddle,
 } from "../dist/agents.js";

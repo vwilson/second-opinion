@@ -76,7 +76,12 @@ export async function readFileCapped(filePath: string): Promise<string> {
     // (e.g. the file shrank after stat), so slice to what was actually read
     // rather than decoding zero padding into the result
     const headRead = await fh.read(head, 0, FILE_HEAD_BYTES, 0);
-    const tailRead = await fh.read(tail, 0, FILE_TAIL_BYTES, size - FILE_TAIL_BYTES);
+    const tailRead = await fh.read(
+      tail,
+      0,
+      FILE_TAIL_BYTES,
+      size - FILE_TAIL_BYTES
+    );
     const omitted = size - headRead.bytesRead - tailRead.bytesRead;
     return (
       head.toString("utf8", 0, headRead.bytesRead) +
@@ -293,7 +298,8 @@ export function resolveClaudeCli(): CliCommand {
         `${CLAUDE_ENV_VAR} is set to "${override}", but that file does not exist.`
       );
     }
-    return (claudeCliCache = asCliCommand(override));
+    claudeCliCache = asCliCommand(override);
+    return claudeCliCache;
   }
 
   const isWindows = process.platform === "win32";
@@ -307,7 +313,8 @@ export function resolveClaudeCli(): CliCommand {
     for (const dir of pathDirs) {
       const exe = path.join(dir, "claude.exe");
       if (existsSync(exe)) {
-        return (claudeCliCache = { command: exe, prefixArgs: [] });
+        claudeCliCache = { command: exe, prefixArgs: [] };
+        return claudeCliCache;
       }
     }
     const jsRoots = [
@@ -321,10 +328,8 @@ export function resolveClaudeCli(): CliCommand {
     for (const root of jsRoots) {
       const entry = path.join(root, ...CLAUDE_PKG_ENTRY.split("/"));
       if (existsSync(entry)) {
-        return (claudeCliCache = {
-          command: process.execPath,
-          prefixArgs: [entry],
-        });
+        claudeCliCache = { command: process.execPath, prefixArgs: [entry] };
+        return claudeCliCache;
       }
     }
   } else {
@@ -335,14 +340,13 @@ export function resolveClaudeCli(): CliCommand {
         const target = realpathSync(shim);
         if (target.endsWith(expectedSuffix)) {
           // npm global: bin symlink straight to the package's cli.js
-          return (claudeCliCache = {
-            command: process.execPath,
-            prefixArgs: [target],
-          });
+          claudeCliCache = { command: process.execPath, prefixArgs: [target] };
+          return claudeCliCache;
         }
         // native installer: a standalone binary (possibly symlinked into
         // ~/.local/bin); run it directly
-        return (claudeCliCache = { command: target, prefixArgs: [] });
+        claudeCliCache = { command: target, prefixArgs: [] };
+        return claudeCliCache;
       } catch {
         // symlink loop, permissions, etc.; try the next PATH entry
       }

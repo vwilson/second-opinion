@@ -65,10 +65,10 @@ test("buildClaudeArgv produces an isolated read-only print invocation", () => {
     "",
     "must load no settings files"
   );
-  assert.deepEqual(
-    JSON.parse(argv[argv.indexOf("--settings") + 1]),
-    { disableAllHooks: true, permissions: { additionalDirectories: [] } }
-  );
+  assert.deepEqual(JSON.parse(argv[argv.indexOf("--settings") + 1]), {
+    disableAllHooks: true,
+    permissions: { additionalDirectories: [] },
+  });
   const denied = argv.slice(argv.indexOf("--disallowedTools") + 1);
   for (const tool of [
     "Bash",
