@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 
 export interface AgentRunOptions {
-  entry: string;
+  command: string;
   argv: string[];
   prompt: string;
   cwd: string;
@@ -238,6 +238,125 @@ export function resolveCliEntry(
   );
 }
 
+/**
+ * How to invoke a CLI: either a native executable run directly, or a JS entry
+ * point run via the current Node binary.
+ */
+export interface CliCommand {
+  command: string;
+  prefixArgs: string[];
+}
+
+const CLAUDE_PKG_ENTRY = "@anthropic-ai/claude-code/cli.js";
+const CLAUDE_ENV_VAR = "AGENTMCP_CLAUDE_CLI";
+
+let claudeCliCache: CliCommand | undefined;
+
+function asCliCommand(target: string): CliCommand {
+  const lower = target.toLowerCase();
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
+    return { command: process.execPath, prefixArgs: [target] };
+  }
+  // .cmd shims can't be spawned with shell:false on Node >= 20.12; resolve
+  // the npm package entry that lives beside the shim instead
+  if (lower.endsWith(".cmd")) {
+    const entry = path.join(
+      path.dirname(target),
+      "node_modules",
+      ...CLAUDE_PKG_ENTRY.split("/")
+    );
+    if (existsSync(entry)) {
+      return { command: process.execPath, prefixArgs: [entry] };
+    }
+    throw new Error(
+      `${CLAUDE_ENV_VAR} points at a .cmd shim ("${target}") with no ` +
+        `adjacent node_modules${path.sep}${CLAUDE_PKG_ENTRY.replaceAll("/", path.sep)}. ` +
+        `Set it to the CLI's JS entry point or native executable instead.`
+    );
+  }
+  return { command: target, prefixArgs: [] };
+}
+
+/**
+ * Locate the Claude Code CLI. Unlike codex/gemini it ships two ways: the
+ * native installer puts a standalone executable on PATH (~/.local/bin), and
+ * the npm global install puts a shim beside node_modules. Native is checked
+ * first since it is the recommended install.
+ */
+export function resolveClaudeCli(): CliCommand {
+  if (claudeCliCache) return claudeCliCache;
+
+  const override = process.env[CLAUDE_ENV_VAR];
+  if (override) {
+    if (!existsSync(override)) {
+      throw new Error(
+        `${CLAUDE_ENV_VAR} is set to "${override}", but that file does not exist.`
+      );
+    }
+    return (claudeCliCache = asCliCommand(override));
+  }
+
+  const isWindows = process.platform === "win32";
+  const pathDirs = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean);
+  const expectedSuffix =
+    path.sep + path.join("node_modules", ...CLAUDE_PKG_ENTRY.split("/"));
+
+  if (isWindows) {
+    for (const dir of pathDirs) {
+      const exe = path.join(dir, "claude.exe");
+      if (existsSync(exe)) {
+        return (claudeCliCache = { command: exe, prefixArgs: [] });
+      }
+    }
+    const jsRoots = [
+      ...pathDirs
+        .filter((dir) => existsSync(path.join(dir, "claude.cmd")))
+        .map((dir) => path.join(dir, "node_modules")),
+      ...(process.env.APPDATA
+        ? [path.join(process.env.APPDATA, "npm", "node_modules")]
+        : []),
+    ];
+    for (const root of jsRoots) {
+      const entry = path.join(root, ...CLAUDE_PKG_ENTRY.split("/"));
+      if (existsSync(entry)) {
+        return (claudeCliCache = {
+          command: process.execPath,
+          prefixArgs: [entry],
+        });
+      }
+    }
+  } else {
+    for (const dir of pathDirs) {
+      const shim = path.join(dir, "claude");
+      if (!existsSync(shim)) continue;
+      try {
+        const target = realpathSync(shim);
+        if (target.endsWith(expectedSuffix)) {
+          // npm global: bin symlink straight to the package's cli.js
+          return (claudeCliCache = {
+            command: process.execPath,
+            prefixArgs: [target],
+          });
+        }
+        // native installer: a standalone binary (possibly symlinked into
+        // ~/.local/bin); run it directly
+        return (claudeCliCache = { command: target, prefixArgs: [] });
+      } catch {
+        // symlink loop, permissions, etc.; try the next PATH entry
+      }
+    }
+  }
+
+  throw new Error(
+    `Could not locate the claude CLI on PATH. Install Claude Code (native ` +
+      `installer or npm i -g @anthropic-ai/claude-code), or set ` +
+      `${CLAUDE_ENV_VAR} to the CLI's absolute path (the native executable ` +
+      `or ${CLAUDE_PKG_ENTRY}).`
+  );
+}
+
 const liveChildren = new Set<number>();
 
 /** Kill every agent process tree still running (used at server shutdown). */
@@ -273,7 +392,7 @@ async function killTree(pid: number): Promise<void> {
 export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
   const start = Date.now();
   return await new Promise<AgentResult>((resolve) => {
-    const child = spawn(process.execPath, [opts.entry, ...opts.argv], {
+    const child = spawn(opts.command, opts.argv, {
       cwd: opts.cwd,
       shell: false,
       windowsHide: true,

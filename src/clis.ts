@@ -64,6 +64,49 @@ export function buildGeminiArgv(model?: string): string[] {
   return [...(model ? ["-m", model] : []), "--approval-mode", "default"];
 }
 
+export function buildClaudeArgv(model?: string): string[] {
+  return [
+    "-p",
+    "--output-format",
+    "text",
+    // one-shot means one-shot: don't save the prompt/transcript to the
+    // user's session state (the ask_codex equivalent is --ephemeral)
+    "--no-session-persistence",
+    // don't load the user's MCP servers: faster startup, and this server is
+    // typically registered at user scope, so loading them would recurse
+    // into ourselves
+    "--strict-mcp-config",
+    // load no settings files at all: user/project settings can carry hooks
+    // (arbitrary shell commands on tool events, including PreToolUse on
+    // read-only tools like Read/Grep), permission allow rules, and
+    // additionalDirectories that widen reads beyond the given cwd
+    "--setting-sources",
+    "",
+    // belt and braces should a settings source slip back in: hooks off and
+    // no extra readable directories
+    "--settings",
+    '{"disableAllHooks":true,"permissions":{"additionalDirectories":[]}}',
+    ...(model ? ["--model", model] : []),
+    // headless -p mode auto-denies tools that need approval, and with no
+    // settings sources there are no allow rules to re-enable them; deny the
+    // dangerous ones anyway (deny beats allow) plus the tools that don't
+    // need permission at all (EnterWorktree/ExitWorktree write to disk).
+    // PowerShell is the Bash-equivalent shell tool on Windows installs;
+    // Monitor runs background commands.
+    "--disallowedTools",
+    "Bash",
+    "PowerShell",
+    "Monitor",
+    "EnterWorktree",
+    "ExitWorktree",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+  ];
+}
+
 export function geminiExtraEnv(
   env: NodeJS.ProcessEnv = process.env
 ): Record<string, string> {

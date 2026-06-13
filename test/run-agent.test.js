@@ -12,10 +12,11 @@ const fixturesDir = fileURLToPath(new URL("../fixtures/", import.meta.url));
 const fixture = (name) => path.join(fixturesDir, name);
 const noProgress = async () => {};
 
+// fixtures are JS entry points, so they run via the current Node binary
 function baseOpts(entry) {
   return {
-    entry,
-    argv: [],
+    command: process.execPath,
+    argv: [entry],
     prompt: "hello stdin",
     cwd: process.cwd(),
     timeoutMs: 30_000,
