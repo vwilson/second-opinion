@@ -245,11 +245,13 @@ const CLAUDE: AgentDef = {
   },
   // matches the CLI's "Claude Fable 5 is currently unavailable" disabled-model
   // message and unknown/invalid-model errors; checks stdout and stderr since
-  // the CLI prints the disabled notice to stdout
+  // the CLI prints the disabled notice to stdout. The "unavailable" branch
+  // requires the name "Claude" on the line so a service/account-level outage
+  // ("Service is currently unavailable") isn't misread as a model downgrade.
   isModelUnavailable: (result) => {
     const s = `${result.output}\n${result.stderrTail}`;
     return (
-      /currently unavailable/i.test(s) ||
+      /claude\b[^\n]*\b(currently unavailable|is unavailable)\b/i.test(s) ||
       /(unknown|invalid|unsupported) model/i.test(s) ||
       /model .*(not found|not available|does not exist)/i.test(s)
     );
@@ -282,6 +284,10 @@ export interface FallbackOutcome {
   result: AgentResult;
 }
 
+// Don't start another fallback candidate with less than this much of the call's
+// timeout budget left — too little time to get a useful answer anyway.
+const MIN_CANDIDATE_MS = 1_000;
+
 /**
  * Run an agent through its ordered model candidates: first success wins (and is
  * cached when `remember`); a model-unavailable failure advances to the next
@@ -295,11 +301,18 @@ export async function runAgentWithFallback(
   let models = await def.resolveModels(opts.requested);
   if (models.length === 0) models = [undefined];
 
+  // `timeout_seconds` is a hard kill for the whole call, not per candidate:
+  // share one deadline across the fallback chain so trying N models can't run
+  // N x the budget. Once too little is left to be worth another attempt, stop.
+  const deadline = Date.now() + opts.timeoutMs;
+
   let last: AgentResult | undefined;
   let lastModel: string | undefined;
 
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
+    const remainingMs = deadline - Date.now();
+    if (last && remainingMs < MIN_CANDIDATE_MS) break;
     const ctx = def.prepareContext(opts.cwd);
     try {
       const result = await runAgent({
@@ -307,7 +320,7 @@ export async function runAgentWithFallback(
         argv: [...cli.prefixArgs, ...def.buildArgv(model, ctx)],
         prompt: opts.prompt,
         cwd: opts.cwd,
-        timeoutMs: opts.timeoutMs,
+        timeoutMs: remainingMs,
         extraEnv: def.extraEnv(),
         onProgress: opts.onProgress,
       });

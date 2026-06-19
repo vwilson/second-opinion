@@ -158,6 +158,18 @@ test("claude.isModelUnavailable: disabled and unknown models", () => {
   );
 });
 
+test("claude.isModelUnavailable: a service outage is not a downgrade", () => {
+  const c = agent("claude");
+  // a service/account-level outage must surface, not silently downgrade
+  assert.equal(
+    c.isModelUnavailable({
+      output: "",
+      stderrTail: "Error: Service is currently unavailable (503)",
+    }),
+    false
+  );
+});
+
 test("claude.isModelUnavailable: a normal answer is available", () => {
   const c = agent("claude");
   assert.equal(c.isModelUnavailable({ output: "OK", stderrTail: "" }), false);

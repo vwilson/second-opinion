@@ -68,8 +68,14 @@ downgrade the model). Match against both `result.output` and `result.stderrTail`
 to stdout). Current matchers:
 - **gemini:** `limit: 0` (tier-gate) or model-not-found — deliberately **not**
   generic 429s (a transient rate limit shouldn't downgrade the model).
-- **claude:** "currently unavailable" (disabled model) or unknown/invalid model.
+- **claude:** a disabled-model notice (requires the name "Claude" on the line,
+  so a service/account outage like "Service is currently unavailable" isn't
+  misread) or unknown/invalid model.
 - **codex:** none (single-candidate list, so no fallback to trigger).
+
+The whole fallback chain shares one `timeout_seconds` deadline
+(`runAgentWithFallback`), so trying N candidates can't run N× the budget — each
+later candidate gets only the remaining time.
 
 When a model id or its error signature changes, update the base list / matcher
 in `registry.ts` and add a case to `test/models.test.js`.
