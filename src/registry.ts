@@ -133,8 +133,15 @@ function jsCli(entry: string): CliCommand {
 // Smartest Claude coding models, smartest-first. Fable 5 is the most capable
 // but is currently disabled globally; the runner falls through to Opus 4.8
 // (and back to Fable automatically once it returns). Full ids, not short
-// aliases, so selection is unambiguous.
-const CLAUDE_MODELS = ["claude-fable-5", "claude-opus-4-8"];
+// aliases, so selection is unambiguous. The final `undefined` is the CLI's own
+// configured default (no `--model`): if an account can run neither high-end id,
+// auto-selection still works exactly as it did before this feature existed
+// rather than erroring out.
+const CLAUDE_MODELS: (string | undefined)[] = [
+  "claude-fable-5",
+  "claude-opus-4-8",
+  undefined,
+];
 
 const CODEX: AgentDef = {
   name: "codex",

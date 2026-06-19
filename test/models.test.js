@@ -43,12 +43,15 @@ test("rankGeminiModels orders by generation, then tier, latest-first", () => {
   ]);
 });
 
-test("rankGeminiModels drops embedding / aqa / non-chat models", () => {
+test("rankGeminiModels drops embedding / aqa / image / non-chat models", () => {
   const models = [
     m("models/gemini-2.5-pro"),
     m("models/embedding-001", ["embedContent"]),
     m("models/text-embedding-004", []),
     m("models/aqa", ["generateAnswer"]),
+    // image-output model: uses generateContent but isn't a coding model
+    m("models/gemini-2.5-flash-image"),
+    m("models/imagen-4.0-generate"),
     // chat-shaped name but lacks generateContent → excluded
     m("models/gemini-vision-only", ["embedContent"]),
   ];
@@ -105,6 +108,17 @@ test("geminiProbeList prefers a full Flash over flash-lite", () => {
     "gemini-9-flash",
   ]);
   assert.ok(got.includes("gemini-9-flash"), "the non-lite Flash is preserved");
+});
+
+test("rankGeminiModels: newest dated preview of a tied family wins", () => {
+  const models = [
+    m("models/gemini-2.5-flash-preview-09-2025"),
+    m("models/gemini-2.5-flash-preview-12-2025"),
+  ];
+  assert.deepEqual(rankGeminiModels(models), [
+    "gemini-2.5-flash-preview-12-2025", // newer, not ascending-name order
+    "gemini-2.5-flash-preview-09-2025",
+  ]);
 });
 
 // ---- listGeminiModels ----------------------------------------------------
@@ -214,17 +228,20 @@ test("resolveModels: explicit model collapses the chain", async () => {
   ]);
 });
 
-test("claude.resolveModels: Fable then Opus, cached winner", async () => {
+test("claude.resolveModels: Fable, Opus, then the CLI default", async () => {
   const c = agent("claude");
+  // the trailing `undefined` (no --model) keeps lower-tier accounts working
   assert.deepEqual(await c.resolveModels(undefined), [
     "claude-fable-5",
     "claude-opus-4-8",
+    undefined,
   ]);
   // simulate a prior call that fell through to Opus (Fable disabled)
   rememberModel("claude", "claude-opus-4-8");
   assert.deepEqual(await c.resolveModels(undefined), [
     "claude-opus-4-8",
     "claude-fable-5",
+    undefined,
   ]);
 });
 

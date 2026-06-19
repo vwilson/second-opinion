@@ -27,8 +27,11 @@ const GEMINI_LIST_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 const LIST_TIMEOUT_MS = 10_000;
 
-// Non-chat / lower-tier families we never want auto-selected as "smartest".
-const EXCLUDE_RE = /embedding|aqa|imagen|veo|gemma|learnlm|tts/i;
+// Non-chat / lower-tier families we never want auto-selected as a coding model.
+// `image` covers both `imagen-*` and image-output chat ids like
+// `gemini-2.5-flash-image` (a.k.a. "Nano Banana"), which still expose
+// generateContent but are not coding/chat models.
+const EXCLUDE_RE = /embedding|aqa|image|veo|gemma|learnlm|tts|nano-banana/i;
 
 interface GeminiModelInfo {
   name?: unknown;
@@ -55,6 +58,22 @@ function versionOf(id: string): number {
   // digits elsewhere (gemini-exp-1206) must not masquerade as a huge version
   const m = id.match(/gemini-(\d+)(?:\.(\d+))?/i);
   return m ? Number(m[1]) + Number(m[2] ?? 0) / 10 : 0;
+}
+
+/**
+ * A recency key for dated previews, so the newest preview of a tied
+ * generation/tier wins (e.g. `...-preview-12-2025` over `...-preview-09-2025`).
+ * 0 means "no date" (a stable GA id), which is preferred over any preview.
+ */
+function previewDateKey(id: string): number {
+  const my = id.match(/-(\d{2})-(\d{4})\b/); // MM-YYYY (current preview shape)
+  if (my) return Number(my[2]) * 100 + Number(my[1]);
+  const ymd = id.match(/-(\d{4})-(\d{2})-(\d{2})\b/); // YYYY-MM-DD
+  if (ymd) {
+    return Number(ymd[1]) * 10000 + Number(ymd[2]) * 100 + Number(ymd[3]);
+  }
+  const num = id.match(/-(\d{4,})\b/); // trailing date-ish run (e.g. MMDD)
+  return num ? Number(num[1]) : 0;
 }
 
 /**
@@ -89,6 +108,11 @@ export function rankGeminiModels(models: readonly GeminiModelInfo[]): string[] {
     const ta = tierWeight(a);
     const tb = tierWeight(b);
     if (ta !== tb) return tb - ta;
+    const da = previewDateKey(a);
+    const db = previewDateKey(b);
+    // a stable (undated) id beats any preview; among previews, newest first
+    if ((da === 0) !== (db === 0)) return da === 0 ? -1 : 1;
+    if (da !== db) return db - da;
     return a.localeCompare(b);
   });
   return uniq;

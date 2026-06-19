@@ -49,8 +49,10 @@ coming back online) is re-discovered on the next server start.
 
 Per-agent base lists:
 - **codex** → `[undefined]` (let the CLI pick its flagship; no `-m`).
-- **claude** → `["claude-fable-5", "claude-opus-4-8"]` (Fable is smartest but is
-  currently disabled globally → falls through to Opus 4.8).
+- **claude** → `["claude-fable-5", "claude-opus-4-8", undefined]` (Fable is
+  smartest but is currently disabled globally → falls through to Opus 4.8, then
+  to the CLI's own configured default so a lower-tier account that can run
+  neither high-end id still works).
 - **gemini** → live ListModels ranking when `GEMINI_API_KEY` is in the server
   env (after the first success, the cached winner is reused without re-running
   discovery), else the curated list led by Google's `gemini-{pro,flash}-latest`
