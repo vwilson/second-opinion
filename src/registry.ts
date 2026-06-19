@@ -20,6 +20,7 @@ import {
 import {
   GEMINI_FALLBACK_MODELS,
   GEMINI_SAFETY_NET,
+  geminiProbeList,
   listGeminiModels,
   SAFE_MODEL_RE,
 } from "./models.js";
@@ -52,8 +53,12 @@ export interface AgentDef {
   prepareContext(cwd: string): AgentContext;
   buildArgv(model: string | undefined, ctx: AgentContext): string[];
   extraEnv(): Record<string, string> | undefined;
-  /** ordered model candidates, smartest-first (cache- and override-aware) */
-  resolveModels(requested: string | undefined): Promise<(string | undefined)[]>;
+  /** ordered model candidates, smartest-first (cache- and override-aware).
+   * `budgetMs` bounds any discovery I/O to the call's remaining timeout. */
+  resolveModels(
+    requested: string | undefined,
+    budgetMs?: number
+  ): Promise<(string | undefined)[]>;
   /** true when a failed run means "this model isn't available to me" */
   isModelUnavailable(result: AgentResult): boolean;
   extractAnswer(result: AgentResult, ctx: AgentContext): Promise<string>;
@@ -191,7 +196,7 @@ const GEMINI: AgentDef = {
   prepareContext: (cwd) => ({ cwd }),
   buildArgv: (model) => buildGeminiArgv(model),
   extraEnv: () => geminiExtraEnv(),
-  resolveModels: async (requested) => {
+  resolveModels: async (requested, budgetMs) => {
     const forced = forcedModel("gemini", requested);
     if (forced) return [forced];
     // once a model has worked this process, reuse it (via withCache) instead of
@@ -199,10 +204,11 @@ const GEMINI: AgentDef = {
     if (modelCache.has("gemini")) {
       return withCache("gemini", [...GEMINI_FALLBACK_MODELS]);
     }
-    const discovered = await listGeminiModels();
-    // cap probing: the first call may spawn the CLI once per tier-gated model
-    // before landing on a working one, so keep the chain short
-    const base = (discovered ?? [...GEMINI_FALLBACK_MODELS]).slice(0, 4);
+    const discovered = await listGeminiModels(process.env, budgetMs);
+    // cap probing (first call may spawn the CLI once per tier-gated model), but
+    // keep the best discovered Flash so a free-tier key whose Pro candidates
+    // fail with `limit: 0` still reaches a current Flash before the safety net
+    const base = geminiProbeList(discovered ?? [...GEMINI_FALLBACK_MODELS]);
     if (!base.includes(GEMINI_SAFETY_NET)) base.push(GEMINI_SAFETY_NET);
     return withCache("gemini", base);
   },
@@ -298,13 +304,15 @@ export async function runAgentWithFallback(
   cli: CliCommand,
   opts: FallbackRunOptions
 ): Promise<FallbackOutcome> {
-  let models = await def.resolveModels(opts.requested);
-  if (models.length === 0) models = [undefined];
-
   // `timeout_seconds` is a hard kill for the whole call, not per candidate:
-  // share one deadline across the fallback chain so trying N models can't run
-  // N x the budget. Once too little is left to be worth another attempt, stop.
+  // start the deadline before model resolution (which, for Gemini, may block in
+  // ListModels) and share it across the fallback chain, so discovery + trying N
+  // models can't exceed the budget. Discovery itself is bounded by the budget,
+  // and once too little is left to be worth another attempt, we stop.
   const deadline = Date.now() + opts.timeoutMs;
+
+  let models = await def.resolveModels(opts.requested, opts.timeoutMs);
+  if (models.length === 0) models = [undefined];
 
   let last: AgentResult | undefined;
   let lastModel: string | undefined;

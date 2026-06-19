@@ -88,7 +88,7 @@ back online is picked up on the next server start.
 | Agent  | Default candidates (smartest → fallback)                                  |
 | ------ | ------------------------------------------------------------------------- |
 | codex  | the `codex` CLI's own flagship model (no `-m` passed)                      |
-| gemini | discovered from the ListModels API and ranked (pro > flash > flash-lite, newest generation first), else the `gemini-pro-latest` → `gemini-flash-latest` → `gemini-2.5-pro` → `gemini-2.5-flash` curated list |
+| gemini | discovered from the ListModels API and ranked (newest generation first, then pro > flash > flash-lite within a generation), else the `gemini-pro-latest` → `gemini-flash-latest` → `gemini-2.5-pro` → `gemini-2.5-flash` curated list |
 | claude | `claude-fable-5` → `claude-opus-4-8`                                       |
 
 - **Gemini discovery needs `GEMINI_API_KEY` in the server's environment.** With

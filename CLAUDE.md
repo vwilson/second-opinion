@@ -56,8 +56,11 @@ Per-agent base lists:
   discovery), else the curated list led by Google's `gemini-{pro,flash}-latest`
   aliases (which track the current generation server-side) down to concrete 2.5
   ids; always capped and ending in the `gemini-2.5-flash` safety net. Ranking
-  keys off the generation number, so a newer family (`gemini-3-*`) outranks
-  `gemini-2.5-*` automatically.
+  is generation-first, then tier, so a newer family (`gemini-3-*`) outranks
+  `gemini-2.5-*` regardless of tier (a current Flash can beat an older Pro);
+  `geminiProbeList` keeps the best discovered Flash even when the cap would
+  otherwise drop it behind tier-gated Pro candidates. Discovery is bounded by
+  the call's remaining timeout budget.
 
 ### `isModelUnavailable` must be precise
 

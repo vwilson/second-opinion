@@ -61,7 +61,10 @@ function versionOf(id: string): number {
  * Rank ListModels output smartest-first. Keeps only chat models (those whose
  * `supportedGenerationMethods` includes `generateContent`), drops embedding /
  * image / lower-tier families, strips the `models/` prefix, and orders by
- * tier, then version, then name for a stable result.
+ * generation (version) first, then tier, then name. Generation leads tier so a
+ * newer family wins regardless of tier — Google markets the current Flash as
+ * its strongest coding model, so an older Pro must not outrank a newer Flash;
+ * tier only breaks ties within the same generation (Pro as the flagship).
  */
 export function rankGeminiModels(models: readonly GeminiModelInfo[]): string[] {
   const ids: string[] = [];
@@ -80,31 +83,50 @@ export function rankGeminiModels(models: readonly GeminiModelInfo[]): string[] {
 
   const uniq = [...new Set(ids)];
   uniq.sort((a, b) => {
-    const ta = tierWeight(a);
-    const tb = tierWeight(b);
-    if (ta !== tb) return tb - ta;
     const va = versionOf(a);
     const vb = versionOf(b);
     if (va !== vb) return vb > va ? 1 : -1;
+    const ta = tierWeight(a);
+    const tb = tierWeight(b);
+    if (ta !== tb) return tb - ta;
     return a.localeCompare(b);
   });
   return uniq;
 }
 
 /**
+ * Cap the discovered candidate list so the first call doesn't probe every
+ * tier-gated model, while guaranteeing the best Flash survives the cap: on a
+ * free-tier key the leading Pro candidates fail with `limit: 0`, and without
+ * this the chain would skip a discovered current Flash (e.g. gemini-3.5-flash)
+ * and fall straight to the hard-coded 2.5 safety net.
+ */
+export function geminiProbeList(ranked: string[], cap = 4): string[] {
+  const base = ranked.slice(0, cap);
+  const bestFlash = ranked.find(
+    (id) => /flash/i.test(id) && !/flash-lite/i.test(id)
+  );
+  if (bestFlash && !base.includes(bestFlash)) base.push(bestFlash);
+  return base;
+}
+
+/**
  * Discover the user's Gemini models via the ListModels REST API and return
  * them smartest-first, or null when discovery isn't possible (no key in the
  * server env, no global fetch, network/HTTP error, or an empty result). A null
- * return is the signal to fall back to GEMINI_FALLBACK_MODELS.
+ * return is the signal to fall back to GEMINI_FALLBACK_MODELS. `budgetMs` caps
+ * the request so discovery can't exceed the call's remaining timeout budget.
  */
 export async function listGeminiModels(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  budgetMs: number = LIST_TIMEOUT_MS
 ): Promise<string[] | null> {
   const key = env.GEMINI_API_KEY;
   if (!key || typeof fetch !== "function") return null;
 
+  const timeoutMs = Math.max(0, Math.min(LIST_TIMEOUT_MS, budgetMs));
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url = `${GEMINI_LIST_URL}?pageSize=200&key=${encodeURIComponent(key)}`;
     const resp = await fetch(url, { signal: controller.signal });

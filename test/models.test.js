@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   GEMINI_SAFETY_NET,
+  geminiProbeList,
   listGeminiModels,
   rankGeminiModels,
   SAFE_MODEL_RE,
@@ -23,7 +24,7 @@ const agent = (name) => {
 
 // ---- rankGeminiModels ----------------------------------------------------
 
-test("rankGeminiModels orders by tier, then version, latest-first", () => {
+test("rankGeminiModels orders by generation, then tier, latest-first", () => {
   const models = [
     m("models/gemini-2.5-flash"),
     m("models/gemini-2.5-pro"),
@@ -33,12 +34,12 @@ test("rankGeminiModels orders by tier, then version, latest-first", () => {
     m("models/gemini-pro-latest"),
   ];
   assert.deepEqual(rankGeminiModels(models), [
-    "gemini-pro-latest", // pro, latest → top
-    "gemini-2.5-pro", // pro, 2.5
-    "gemini-1.5-pro", // pro, 1.5
-    "gemini-2.5-flash", // flash, 2.5
-    "gemini-2.0-flash", // flash, 2.0
-    "gemini-2.5-flash-lite", // flash-lite
+    "gemini-pro-latest", // latest → newest generation
+    "gemini-2.5-pro", // gen 2.5, pro
+    "gemini-2.5-flash", // gen 2.5, flash
+    "gemini-2.5-flash-lite", // gen 2.5, flash-lite
+    "gemini-2.0-flash", // gen 2.0
+    "gemini-1.5-pro", // gen 1.5
   ]);
 });
 
@@ -65,19 +66,45 @@ test("rankGeminiModels ignores malformed entries and unsafe ids", () => {
   assert.deepEqual(rankGeminiModels(models), ["gemini-2.5-pro"]);
 });
 
-test("rankGeminiModels: newer generation outranks older", () => {
+test("rankGeminiModels: a newer Flash outranks an older Pro", () => {
   const models = [
     m("models/gemini-2.5-pro"),
     m("models/gemini-3-pro-preview"), // single-major generation
     m("models/gemini-2.5-flash"),
-    m("models/gemini-3.5-flash"),
+    m("models/gemini-3.5-flash"), // newest generation, Flash tier
   ];
   assert.deepEqual(rankGeminiModels(models), [
-    "gemini-3-pro-preview", // pro, gen 3
-    "gemini-2.5-pro", // pro, gen 2.5
-    "gemini-3.5-flash", // flash, gen 3.5
-    "gemini-2.5-flash", // flash, gen 2.5
+    "gemini-3.5-flash", // gen 3.5 wins regardless of tier
+    "gemini-3-pro-preview", // gen 3.0
+    "gemini-2.5-pro", // gen 2.5, pro before flash
+    "gemini-2.5-flash", // gen 2.5, flash
   ]);
+});
+
+test("geminiProbeList keeps the best Flash past the probe cap", () => {
+  // four newer Pro variants ahead of the current Flash
+  const ranked = [
+    "gemini-3.6-pro",
+    "gemini-3.6-pro-preview",
+    "gemini-3.5-pro",
+    "gemini-3.5-pro-exp",
+    "gemini-3.5-flash",
+  ];
+  const got = geminiProbeList(ranked);
+  assert.ok(got.includes("gemini-3.5-flash"), "best Flash survives the cap");
+  assert.ok(got.length <= 5);
+});
+
+test("geminiProbeList prefers a full Flash over flash-lite", () => {
+  const got = geminiProbeList([
+    "gemini-9-pro",
+    "gemini-9-pro-a",
+    "gemini-9-pro-b",
+    "gemini-9-pro-c",
+    "gemini-9-flash-lite",
+    "gemini-9-flash",
+  ]);
+  assert.ok(got.includes("gemini-9-flash"), "the non-lite Flash is preserved");
 });
 
 // ---- listGeminiModels ----------------------------------------------------
