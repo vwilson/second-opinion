@@ -62,9 +62,9 @@ const sharedShape = {
     .int()
     .min(30)
     .max(3600)
-    .default(600)
+    .default(3600)
     .describe(
-      "Hard kill timeout. Default 600s; these agents often need several minutes for codebase questions."
+      "Hard kill timeout. Default 3600s (the max); these agents often need many minutes for codebase questions. Lower it if you want a faster failure."
     ),
 };
 

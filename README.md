@@ -12,7 +12,7 @@ ask Codex/Gemini, or host it in Codex/Gemini to ask Claude.
 | `ask_claude` | One-shot question to `claude -p` (edits/shell/network tools denied)     |
 
 Both tools take `prompt` (required), `cwd` (project root the agent may read),
-`model` (optional override), and `timeout_seconds` (default 600). Calls are
+`model` (optional override), and `timeout_seconds` (default 3600, the max). Calls are
 stateless; Claude can invoke both tools in parallel.
 
 ## Build
