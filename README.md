@@ -12,7 +12,7 @@ ask Codex/Gemini, or host it in Codex/Gemini to ask Claude.
 | `ask_claude` | One-shot question to `claude -p` (edits/shell/network tools denied)     |
 
 Both tools take `prompt` (required), `cwd` (project root the agent may read),
-`model` (optional override), and `timeout_seconds` (default 600). Calls are
+`model` (optional override), and `timeout_seconds` (default 3600, the max). Calls are
 stateless; Claude can invoke both tools in parallel.
 
 ## Build
@@ -90,7 +90,10 @@ Each tool only needs its own CLI, so install the ones you'll ask:
   loading it would recurse into itself.
 - The server keeps long agent calls alive by sending MCP progress
   notifications every 10s. If a client ignores progress, set
-  `MCP_TOOL_TIMEOUT=900000` in its environment as a fallback.
+  `MCP_TOOL_TIMEOUT` in its environment to at least the `timeout_seconds`
+  you use, in milliseconds, as a fallback — `MCP_TOOL_TIMEOUT=3600000` to
+  cover the 3600s default. A smaller value (e.g. `900000`) caps such calls
+  client-side well before the server hard kill fires.
 - On Windows, codex runs with `-c windows.sandbox="unelevated"`: a
   user-level `sandbox = "elevated"` config cannot complete its setup when
   codex runs headless (all shell commands fail with "windows sandbox: spawn
