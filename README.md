@@ -88,14 +88,16 @@ back online is picked up on the next server start.
 | Agent  | Default candidates (smartest → fallback)                                  |
 | ------ | ------------------------------------------------------------------------- |
 | codex  | the `codex` CLI's own flagship model (no `-m` passed)                      |
-| gemini | discovered from the ListModels API and ranked (pro > flash > flash-lite, newest first), else `gemini-2.5-pro` → `gemini-2.5-flash` |
+| gemini | discovered from the ListModels API and ranked (pro > flash > flash-lite, newest generation first), else the `gemini-pro-latest` → `gemini-flash-latest` → `gemini-2.5-pro` → `gemini-2.5-flash` curated list |
 | claude | `claude-fable-5` → `claude-opus-4-8`                                       |
 
 - **Gemini discovery needs `GEMINI_API_KEY` in the server's environment.** With
   it, the smartest model your key can run is discovered live via the ListModels
-  REST API; without it (or if the call fails), a curated list is used. Either
-  way, `gemini-2.5-flash` is the final safety net, and tier-gated models
-  (`limit: 0`) are skipped automatically.
+  REST API. Without it (e.g. the OAuth-only setup), the curated list leads with
+  Google's `gemini-{pro,flash}-latest` aliases, which Google hot-swaps to the
+  current generation server-side — so no-key users still reach the newest models
+  without this server being updated. Either way, `gemini-2.5-flash` is the final
+  safety net, and tier-gated models (`limit: 0`) are skipped automatically.
 - **Per-call override:** pass `model` on the tool call to force a specific model
   (skips discovery and fallback).
 - **Persistent override:** set `SECOND_OPINION_CODEX_MODEL`,

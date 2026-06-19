@@ -21,6 +21,7 @@ import {
   GEMINI_FALLBACK_MODELS,
   GEMINI_SAFETY_NET,
   listGeminiModels,
+  SAFE_MODEL_RE,
 } from "./models.js";
 
 // Per-invocation state an agent may need to thread from argv construction
@@ -90,12 +91,34 @@ function withCache(
   return dedupe(list);
 }
 
-/** An explicit per-call model, else the SECOND_OPINION_<NAME>_MODEL override. */
+// one stderr warning per agent whose env override we had to reject
+const warnedBadOverride = new Set<string>();
+
+/**
+ * An explicit per-call model, else the SECOND_OPINION_<NAME>_MODEL override.
+ * The per-call `model` is already validated by the tool's input schema; the env
+ * override is operator-supplied, so validate it against the same rule before it
+ * can reach an argv builder — an unsafe value (`--flag`, whitespace) is ignored
+ * with a one-time warning so the call falls back to normal selection rather
+ * than producing an invalid CLI invocation.
+ */
 function forcedModel(
   name: string,
   requested: string | undefined
 ): string | undefined {
-  return requested ?? process.env[`SECOND_OPINION_${name.toUpperCase()}_MODEL`];
+  if (requested) return requested;
+  const env = process.env[`SECOND_OPINION_${name.toUpperCase()}_MODEL`];
+  if (!env) return undefined;
+  if (!SAFE_MODEL_RE.test(env)) {
+    if (!warnedBadOverride.has(name)) {
+      warnedBadOverride.add(name);
+      console.error(
+        `second-opinion: ignoring SECOND_OPINION_${name.toUpperCase()}_MODEL ("${env}") — not a valid model id; using auto-selection instead.`
+      );
+    }
+    return undefined;
+  }
+  return env;
 }
 
 function jsCli(entry: string): CliCommand {
@@ -171,6 +194,11 @@ const GEMINI: AgentDef = {
   resolveModels: async (requested) => {
     const forced = forcedModel("gemini", requested);
     if (forced) return [forced];
+    // once a model has worked this process, reuse it (via withCache) instead of
+    // paying the ListModels round-trip — and its timeout — on every call
+    if (modelCache.has("gemini")) {
+      return withCache("gemini", [...GEMINI_FALLBACK_MODELS]);
+    }
     const discovered = await listGeminiModels();
     // cap probing: the first call may spawn the CLI once per tier-gated model
     // before landing on a working one, so keep the chain short

@@ -52,8 +52,12 @@ Per-agent base lists:
 - **claude** → `["claude-fable-5", "claude-opus-4-8"]` (Fable is smartest but is
   currently disabled globally → falls through to Opus 4.8).
 - **gemini** → live ListModels ranking when `GEMINI_API_KEY` is in the server
-  env, else the curated `["gemini-2.5-pro", "gemini-2.5-flash"]`; always capped
-  and ending in the `gemini-2.5-flash` safety net.
+  env (after the first success, the cached winner is reused without re-running
+  discovery), else the curated list led by Google's `gemini-{pro,flash}-latest`
+  aliases (which track the current generation server-side) down to concrete 2.5
+  ids; always capped and ending in the `gemini-2.5-flash` safety net. Ranking
+  keys off the generation number, so a newer family (`gemini-3-*`) outranks
+  `gemini-2.5-*` automatically.
 
 ### `isModelUnavailable` must be precise
 

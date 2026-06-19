@@ -65,6 +65,21 @@ test("rankGeminiModels ignores malformed entries and unsafe ids", () => {
   assert.deepEqual(rankGeminiModels(models), ["gemini-2.5-pro"]);
 });
 
+test("rankGeminiModels: newer generation outranks older", () => {
+  const models = [
+    m("models/gemini-2.5-pro"),
+    m("models/gemini-3-pro-preview"), // single-major generation
+    m("models/gemini-2.5-flash"),
+    m("models/gemini-3.5-flash"),
+  ];
+  assert.deepEqual(rankGeminiModels(models), [
+    "gemini-3-pro-preview", // pro, gen 3
+    "gemini-2.5-pro", // pro, gen 2.5
+    "gemini-3.5-flash", // flash, gen 3.5
+    "gemini-2.5-flash", // flash, gen 2.5
+  ]);
+});
+
 // ---- listGeminiModels ----------------------------------------------------
 
 test("listGeminiModels returns null with no API key (no network)", async () => {
@@ -180,4 +195,25 @@ test("codex.resolveModels defaults to the CLI flagship (no -m)", async () => {
 
 test("the Gemini safety-net model is free-tier reachable", () => {
   assert.equal(GEMINI_SAFETY_NET, "gemini-2.5-flash");
+});
+
+test("SECOND_OPINION_<AGENT>_MODEL: unsafe value is ignored", async () => {
+  const c = agent("claude");
+  process.env.SECOND_OPINION_CLAUDE_MODEL = "--yolo";
+  try {
+    const got = await c.resolveModels(undefined);
+    assert.ok(!got.includes("--yolo"), "unsafe override must not reach argv");
+  } finally {
+    delete process.env.SECOND_OPINION_CLAUDE_MODEL;
+  }
+});
+
+test("SECOND_OPINION_<AGENT>_MODEL: a valid value pins the model", async () => {
+  const c = agent("claude");
+  process.env.SECOND_OPINION_CLAUDE_MODEL = "claude-sonnet-4-6";
+  try {
+    assert.deepEqual(await c.resolveModels(undefined), ["claude-sonnet-4-6"]);
+  } finally {
+    delete process.env.SECOND_OPINION_CLAUDE_MODEL;
+  }
 });

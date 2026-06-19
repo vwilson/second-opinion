@@ -6,11 +6,18 @@ import process from "node:process";
 // (e.g. `--yolo`) into the spawned argv.
 export const SAFE_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 
-// Used when ListModels can't run (no GEMINI_API_KEY in the server env, or the
-// call failed). `gemini-2.5-pro` is the smartest broadly-available model;
-// `gemini-2.5-flash` is the free-tier safety net (pro returns `limit: 0` on a
-// free key).
-export const GEMINI_FALLBACK_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"];
+// Used when ListModels can't run (no GEMINI_API_KEY in the server env — e.g.
+// the README's OAuth-only setup — or the call failed). The `-latest` aliases
+// auto-track the current generation server-side (Google hot-swaps them on each
+// release, with notice), so no-key users still reach the newest pro/flash
+// without this list being updated; the concrete 2.5 ids are the floor if a
+// `-latest` alias isn't reachable on the caller's tier.
+export const GEMINI_FALLBACK_MODELS = [
+  "gemini-pro-latest",
+  "gemini-flash-latest",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+];
 
 // Always reachable on a free-tier key — appended last so the candidate chain
 // can never dead-end on tier-gated models.
@@ -43,8 +50,11 @@ function tierWeight(id: string): number {
  */
 function versionOf(id: string): number {
   if (/-latest\b/i.test(id)) return Number.POSITIVE_INFINITY;
-  const m = id.match(/(\d+)\.(\d+)/);
-  return m ? Number(m[1]) + Number(m[2]) / 10 : 0;
+  // major with optional minor, anchored to the gemini- family prefix: a
+  // single-digit generation (gemini-3-pro) must outrank gemini-2.5, and stray
+  // digits elsewhere (gemini-exp-1206) must not masquerade as a huge version
+  const m = id.match(/gemini-(\d+)(?:\.(\d+))?/i);
+  return m ? Number(m[1]) + Number(m[2] ?? 0) / 10 : 0;
 }
 
 /**
