@@ -1,5 +1,4 @@
 import { existsSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -7,22 +6,11 @@ import { z } from "zod";
 import {
   type AgentResult,
   type CliCommand,
-  cleanGeminiOutput,
   killAllAgents,
-  readFileCapped,
-  resolveClaudeCli,
-  runAgent,
   truncateMiddle,
 } from "./agents.js";
-import {
-  buildClaudeArgv,
-  buildCodexArgv,
-  buildGeminiArgv,
-  geminiExtraEnv,
-  newCodexOutFile,
-  resolveCodexEntry,
-  resolveGeminiEntry,
-} from "./clis.js";
+import { SAFE_MODEL_RE } from "./models.js";
+import { type AgentDef, AGENTS, runAgentWithFallback } from "./registry.js";
 
 if (process.argv.includes("--doctor")) {
   const { runDoctor } = await import("./doctor.js");
@@ -50,12 +38,13 @@ const sharedShape = {
     .string()
     // a leading dash could smuggle a CLI flag (e.g. --yolo) into the argv
     .regex(
-      /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/,
+      SAFE_MODEL_RE,
       "model must be a plain model id (letters, digits, . _ : / -; no leading dash)"
     )
     .optional()
     .describe(
-      "Model override. Omit to use the user's configured default (recommended)."
+      "Model override. Omit to auto-select the smartest model the agent's account can run " +
+        "(recommended)."
     ),
   timeout_seconds: z
     .number()
@@ -171,143 +160,47 @@ function draining<A extends unknown[], R>(
   };
 }
 
-server.registerTool(
-  "ask_codex",
-  {
-    title: "Ask OpenAI Codex (second opinion)",
-    description:
-      "Get a second opinion from OpenAI Codex (GPT-5-class coding agent) running locally with " +
-      "read-only access to the user's files. One-shot and stateless: it explores the given cwd, " +
-      "reasons about the code, and returns a single final answer. It cannot edit files or run " +
-      "state-changing commands. Use for: reviewing a plan or diff, debugging hypotheses, " +
-      "architecture trade-offs, or cross-checking your own conclusion. Calls typically take " +
-      "1-5 minutes. May be called in parallel with ask_gemini.",
-    inputSchema: sharedShape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  draining(async (args: SharedArgs, extra) => {
-    let entry: string;
-    let cwd: string;
-    try {
-      entry = resolveCodexEntry();
-      cwd = resolveCwd(args.cwd);
-    } catch (err) {
-      return textResult(String(err instanceof Error ? err.message : err), true);
-    }
-
-    const tmpOut = newCodexOutFile();
-    const argv = buildCodexArgv(cwd, tmpOut, args.model);
-
-    try {
-      const result = await runAgent({
-        command: process.execPath,
-        argv: [entry, ...argv],
-        prompt: args.prompt,
-        cwd,
-        timeoutMs: args.timeout_seconds * 1000,
-        onProgress: makeProgressReporter("codex", extra as HandlerExtra),
-      });
-      if (!result.ok) return errorResult("codex", result);
-
-      let answer = "";
-      try {
-        answer = (await readFileCapped(tmpOut)).trim();
-      } catch {
-        // fall back to stdout below
-      }
-      if (!answer) answer = result.output.trim();
-      return textResult(truncateMiddle(answer));
-    } finally {
-      await rm(tmpOut, { force: true });
-    }
-  })
-);
-
-server.registerTool(
-  "ask_gemini",
-  {
-    title: "Ask Google Gemini (second opinion)",
-    description:
-      "Get a second opinion from Google Gemini (Gemini 2.5-class agent with a very large context " +
-      "window — good for questions spanning many files) running locally over the user's files. " +
-      "One-shot and stateless: it explores the given cwd, reasons about the code, and returns a " +
-      "single final answer. File edits and shell commands are auto-denied (non-interactive " +
-      "default approval mode), but unlike ask_codex this is CLI policy rather than an OS " +
-      "sandbox, and the agent can reach the network (web fetch, Google Search) — avoid pointing " +
-      "it at directories containing secrets. Use for: reviewing a plan or diff, debugging " +
-      "hypotheses, architecture trade-offs, or cross-checking your own conclusion. Calls " +
-      "typically take 1-5 minutes. May be called in parallel with ask_codex.",
-    inputSchema: sharedShape,
-    annotations: { readOnlyHint: true, openWorldHint: true },
-  },
-  draining(async (args: SharedArgs, extra) => {
-    let entry: string;
-    let cwd: string;
-    try {
-      entry = resolveGeminiEntry();
-      cwd = resolveCwd(args.cwd);
-    } catch (err) {
-      return textResult(String(err instanceof Error ? err.message : err), true);
-    }
-
-    const argv = buildGeminiArgv(args.model);
-    const extraEnv = geminiExtraEnv();
-
-    const result = await runAgent({
-      command: process.execPath,
-      argv: [entry, ...argv],
-      prompt: args.prompt,
-      cwd,
-      timeoutMs: args.timeout_seconds * 1000,
-      extraEnv,
-      onProgress: makeProgressReporter("gemini", extra as HandlerExtra),
-    });
-    if (!result.ok) return errorResult("gemini", result);
-
-    return textResult(truncateMiddle(cleanGeminiOutput(result.output)));
-  })
-);
-
-server.registerTool(
-  "ask_claude",
-  {
-    title: "Ask Anthropic Claude (second opinion)",
-    description:
-      "Get a second opinion from Anthropic Claude (Claude Code CLI) running locally with " +
-      "read-only access to the user's files. One-shot and stateless: it explores the given cwd, " +
-      "reasons about the code, and returns a single final answer. File edits, shell commands, " +
-      "and network tools are disabled by policy (--disallowedTools; not an OS sandbox). Use " +
-      "for: reviewing a plan or diff, debugging hypotheses, architecture trade-offs, or " +
-      "cross-checking your own conclusion. Most useful when this server is hosted by a " +
-      "non-Claude client; from Claude Code itself, prefer ask_codex/ask_gemini for an " +
-      "independent perspective. Calls typically take 1-5 minutes. May be called in parallel " +
-      "with the other tools.",
-    inputSchema: sharedShape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  draining(async (args: SharedArgs, extra) => {
+// One generic handler for every agent: resolve the CLI, then run the agent's
+// ordered model candidates with availability-based fallback (see registry.ts).
+function makeHandler(def: AgentDef) {
+  return draining(async (args: SharedArgs, extra) => {
     let cli: CliCommand;
     let cwd: string;
     try {
-      cli = resolveClaudeCli();
+      cli = def.resolveCli();
       cwd = resolveCwd(args.cwd);
     } catch (err) {
       return textResult(String(err instanceof Error ? err.message : err), true);
     }
 
-    const result = await runAgent({
-      command: cli.command,
-      argv: [...cli.prefixArgs, ...buildClaudeArgv(args.model)],
+    const outcome = await runAgentWithFallback(def, cli, {
+      requested: args.model,
       prompt: args.prompt,
       cwd,
       timeoutMs: args.timeout_seconds * 1000,
-      onProgress: makeProgressReporter("claude", extra as HandlerExtra),
+      onProgress: makeProgressReporter(def.name, extra as HandlerExtra),
+      // only cache the auto-selected winner; an explicit per-call model
+      // shouldn't pin the default for later calls
+      remember: args.model === undefined,
     });
-    if (!result.ok) return errorResult("claude", result);
 
-    return textResult(truncateMiddle(result.output.trim()));
-  })
-);
+    if (!outcome.ok) return errorResult(def.name, outcome.result);
+    return textResult(truncateMiddle(outcome.answer));
+  });
+}
+
+for (const def of AGENTS) {
+  server.registerTool(
+    def.toolName,
+    {
+      title: def.title,
+      description: def.description,
+      inputSchema: sharedShape,
+      annotations: def.annotations,
+    },
+    makeHandler(def)
+  );
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
