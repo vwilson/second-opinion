@@ -1,4 +1,4 @@
-# agentmcp — second-opinion MCP server
+# second-opinion — MCP server
 
 An MCP (stdio) server that exposes locally installed CLI coding agents —
 **OpenAI Codex CLI**, **Google Gemini CLI**, and **Claude Code** — as one-shot
@@ -32,19 +32,19 @@ Claude Code (user scope, all projects):
 # Windows
 claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
 # macOS / Linux
-claude mcp add --scope user second-opinion -- node /path/to/agentmcp/dist/index.js
+claude mcp add --scope user second-opinion -- node /path/to/second-opinion/dist/index.js
 ```
 
 Codex CLI:
 
 ```sh
-codex mcp add second-opinion -- node /path/to/agentmcp/dist/index.js
+codex mcp add second-opinion -- node /path/to/second-opinion/dist/index.js
 ```
 
 Gemini CLI:
 
 ```sh
-gemini mcp add --scope user second-opinion node /path/to/agentmcp/dist/index.js
+gemini mcp add --scope user second-opinion node /path/to/second-opinion/dist/index.js
 ```
 
 ## Prerequisites
@@ -68,9 +68,9 @@ Each tool only needs its own CLI, so install the ones you'll ask:
     treated as the native binary and run directly.
 - If discovery fails (e.g. globals managed by volta or another
   nonstandard package manager), set
-  `AGENTMCP_CODEX_JS` / `AGENTMCP_GEMINI_JS` to the absolute path of each
-  CLI's JS entry point, or `AGENTMCP_CLAUDE_CLI` to the claude executable
-  or its npm `cli.js`.
+  `SECOND_OPINION_CODEX_JS` / `SECOND_OPINION_GEMINI_JS` to the absolute path
+  of each CLI's JS entry point, or `SECOND_OPINION_CLAUDE_CLI` to the claude
+  executable or its npm `cli.js`.
 
 ## Notes
 
