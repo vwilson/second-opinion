@@ -9,7 +9,7 @@ export function resolveCodexEntry(): string {
   return resolveCliEntry(
     "codex",
     ["@openai/codex/bin/codex.js"],
-    "AGENTMCP_CODEX_JS"
+    "SECOND_OPINION_CODEX_JS"
   );
 }
 
@@ -18,13 +18,13 @@ export function resolveGeminiEntry(): string {
   return resolveCliEntry(
     "gemini",
     ["@google/gemini-cli/bundle/gemini.js", "@google/gemini-cli/dist/index.js"],
-    "AGENTMCP_GEMINI_JS"
+    "SECOND_OPINION_GEMINI_JS"
   );
 }
 
 /** A unique temp file for codex's -o (last agent message) output. */
 export function newCodexOutFile(): string {
-  return path.join(os.tmpdir(), `agentmcp-codex-${randomUUID()}.txt`);
+  return path.join(os.tmpdir(), `second-opinion-codex-${randomUUID()}.txt`);
 }
 
 export function buildCodexArgv(

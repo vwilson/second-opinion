@@ -1,10 +1,10 @@
 {
-  "name": "agentmcp",
+  "name": "second-opinion",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "MCP server exposing the Codex and Gemini CLIs as read-only second-opinion agents for Claude Code",
-  "repository": "github:vwilson/agentmcp",
+  "repository": "github:vwilson/second-opinion",
   "engines": {
     "node": ">=20"
   },

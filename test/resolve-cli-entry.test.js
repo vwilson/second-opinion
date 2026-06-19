@@ -11,11 +11,11 @@ const isWindows = process.platform === "win32";
 // resolveCliEntry caches by env var name, so every test uses a unique one
 let envVarCounter = 0;
 function uniqueEnvVar() {
-  return `AGENTMCP_TEST_ENTRY_${process.pid}_${envVarCounter++}`;
+  return `SECOND_OPINION_TEST_ENTRY_${process.pid}_${envVarCounter++}`;
 }
 
 async function makeTempDir(t) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "agentmcp-resolve-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "second-opinion-resolve-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -43,7 +43,10 @@ test("env override wins when the file exists", async (t) => {
 
 test("env override pointing at a missing file throws", async (t) => {
   const envVar = uniqueEnvVar();
-  process.env[envVar] = path.join(os.tmpdir(), "agentmcp-does-not-exist.js");
+  process.env[envVar] = path.join(
+    os.tmpdir(),
+    "second-opinion-does-not-exist.js"
+  );
   t.after(() => {
     delete process.env[envVar];
   });
@@ -62,14 +65,14 @@ test("throws a helpful error when nothing is found", async (t) => {
   assert.throws(
     () =>
       resolveCliEntry(
-        "agentmcp-no-such-cli",
-        ["agentmcp-no-such-pkg/bin/cli.js"],
+        "second-opinion-no-such-cli",
+        ["second-opinion-no-such-pkg/bin/cli.js"],
         envVar
       ),
     (err) => {
-      assert.match(err.message, /agentmcp-no-such-cli/);
+      assert.match(err.message, /second-opinion-no-such-cli/);
       assert.match(err.message, new RegExp(envVar));
-      assert.match(err.message, /agentmcp-no-such-pkg\/bin\/cli\.js/);
+      assert.match(err.message, /second-opinion-no-such-pkg\/bin\/cli\.js/);
       return true;
     }
   );
