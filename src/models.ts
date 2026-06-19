@@ -16,7 +16,8 @@ export const GEMINI_FALLBACK_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"];
 // can never dead-end on tier-gated models.
 export const GEMINI_SAFETY_NET = "gemini-2.5-flash";
 
-const GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_LIST_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models";
 const LIST_TIMEOUT_MS = 10_000;
 
 // Non-chat / lower-tier families we never want auto-selected as "smartest".
@@ -95,8 +96,7 @@ export async function listGeminiModels(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
   try {
-    const url =
-      `${GEMINI_LIST_URL}?pageSize=200&key=${encodeURIComponent(key)}`;
+    const url = `${GEMINI_LIST_URL}?pageSize=200&key=${encodeURIComponent(key)}`;
     const resp = await fetch(url, { signal: controller.signal });
     if (!resp.ok) return null;
     const data = (await resp.json()) as { models?: unknown } | null;

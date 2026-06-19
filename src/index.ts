@@ -10,7 +10,7 @@ import {
   truncateMiddle,
 } from "./agents.js";
 import { SAFE_MODEL_RE } from "./models.js";
-import { type AgentDef, AGENTS, runAgentWithFallback } from "./registry.js";
+import { AGENTS, type AgentDef, runAgentWithFallback } from "./registry.js";
 
 if (process.argv.includes("--doctor")) {
   const { runDoctor } = await import("./doctor.js");

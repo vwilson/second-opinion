@@ -1,6 +1,6 @@
 import os from "node:os";
 import { type AgentResult, killAllAgents } from "./agents.js";
-import { type AgentDef, AGENTS, runAgentWithFallback } from "./registry.js";
+import { AGENTS, type AgentDef, runAgentWithFallback } from "./registry.js";
 
 const DOCTOR_PROMPT =
   "This is an automated health check. Reply with the single word OK and nothing else.";
