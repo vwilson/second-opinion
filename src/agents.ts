@@ -253,7 +253,7 @@ export interface CliCommand {
 }
 
 const CLAUDE_PKG_ENTRY = "@anthropic-ai/claude-code/cli.js";
-const CLAUDE_ENV_VAR = "AGENTMCP_CLAUDE_CLI";
+const CLAUDE_ENV_VAR = "SECOND_OPINION_CLAUDE_CLI";
 
 let claudeCliCache: CliCommand | undefined;
 

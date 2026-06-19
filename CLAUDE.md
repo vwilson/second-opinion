@@ -41,7 +41,8 @@ Each agent resolves an **ordered list of model candidates, smartest-first**, and
 3. Any other failure — or exhausting the list — returns the result as-is.
 
 Selection precedence in `resolveModels`: explicit per-call `model` →
-`AGENTMCP_<NAME>_MODEL` env override → cached winner prepended to → the agent's
+`SECOND_OPINION_<NAME>_MODEL` env override → cached winner prepended to → the
+agent's
 base list. An explicit/override model collapses the list to one entry (no
 fallback). The cache is process-lifetime only, so a returning model (e.g. Fable
 coming back online) is re-discovered on the next server start.

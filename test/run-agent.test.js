@@ -55,7 +55,7 @@ test("runAgent kills a hung process at the timeout", async () => {
 test("runAgent passes extraEnv and sets NO_COLOR", async () => {
   const result = await runAgent({
     ...baseOpts(fixture("print-env.js")),
-    extraEnv: { AGENTMCP_TEST_EXTRA: "yes" },
+    extraEnv: { SECOND_OPINION_TEST_EXTRA: "yes" },
   });
   assert.equal(result.ok, true);
   assert.equal(result.output, "extra=yes;no_color=1");

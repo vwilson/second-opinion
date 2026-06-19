@@ -85,7 +85,7 @@ test("stream collector drops the middle, keeps head and tail", () => {
 });
 
 test("readFileCapped reads small files exactly", async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "agentmcp-test-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "second-opinion-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "small.txt");
   await writeFile(file, "exact content\nwith lines\n");
@@ -93,7 +93,7 @@ test("readFileCapped reads small files exactly", async (t) => {
 });
 
 test("readFileCapped returns head + tail for oversized files", async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "agentmcp-test-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "second-opinion-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "big.txt");
   const size = FILE_READ_CAP + 1_000;

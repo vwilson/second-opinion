@@ -1,4 +1,4 @@
-# agentmcp — second-opinion MCP server
+# second-opinion — MCP server
 
 An MCP (stdio) server that exposes locally installed CLI coding agents —
 **OpenAI Codex CLI**, **Google Gemini CLI**, and **Claude Code** — as one-shot
@@ -13,8 +13,8 @@ ask Codex/Gemini, or host it in Codex/Gemini to ask Claude.
 
 Each tool takes `prompt` (required), `cwd` (project root the agent may read),
 `model` (optional — omit to auto-select the smartest model the agent can run;
-see [Model selection](#model-selection)), and `timeout_seconds` (default 600).
-Calls are stateless and can run in parallel.
+see [Model selection](#model-selection)), and `timeout_seconds` (default 3600,
+the max). Calls are stateless and can run in parallel.
 
 ## Build
 
@@ -33,19 +33,19 @@ Claude Code (user scope, all projects):
 # Windows
 claude mcp add --scope user second-opinion -- node F:\VWI\agentmcp\dist\index.js
 # macOS / Linux
-claude mcp add --scope user second-opinion -- node /path/to/agentmcp/dist/index.js
+claude mcp add --scope user second-opinion -- node /path/to/second-opinion/dist/index.js
 ```
 
 Codex CLI:
 
 ```sh
-codex mcp add second-opinion -- node /path/to/agentmcp/dist/index.js
+codex mcp add second-opinion -- node /path/to/second-opinion/dist/index.js
 ```
 
 Gemini CLI:
 
 ```sh
-gemini mcp add --scope user second-opinion node /path/to/agentmcp/dist/index.js
+gemini mcp add --scope user second-opinion node /path/to/second-opinion/dist/index.js
 ```
 
 ## Prerequisites
@@ -69,9 +69,9 @@ Each tool only needs its own CLI, so install the ones you'll ask:
     treated as the native binary and run directly.
 - If discovery fails (e.g. globals managed by volta or another
   nonstandard package manager), set
-  `AGENTMCP_CODEX_JS` / `AGENTMCP_GEMINI_JS` to the absolute path of each
-  CLI's JS entry point, or `AGENTMCP_CLAUDE_CLI` to the claude executable
-  or its npm `cli.js`.
+  `SECOND_OPINION_CODEX_JS` / `SECOND_OPINION_GEMINI_JS` to the absolute path
+  of each CLI's JS entry point, or `SECOND_OPINION_CLAUDE_CLI` to the claude
+  executable or its npm `cli.js`.
 
 ## Model selection
 
@@ -98,8 +98,9 @@ back online is picked up on the next server start.
   (`limit: 0`) are skipped automatically.
 - **Per-call override:** pass `model` on the tool call to force a specific model
   (skips discovery and fallback).
-- **Persistent override:** set `AGENTMCP_CODEX_MODEL`, `AGENTMCP_GEMINI_MODEL`,
-  or `AGENTMCP_CLAUDE_MODEL` to pin a default model for that agent.
+- **Persistent override:** set `SECOND_OPINION_CODEX_MODEL`,
+  `SECOND_OPINION_GEMINI_MODEL`, or `SECOND_OPINION_CLAUDE_MODEL` to pin a
+  default model for that agent.
 - `npm run doctor` prints the model each agent actually used.
 
 ## Notes
@@ -120,7 +121,10 @@ back online is picked up on the next server start.
   loading it would recurse into itself.
 - The server keeps long agent calls alive by sending MCP progress
   notifications every 10s. If a client ignores progress, set
-  `MCP_TOOL_TIMEOUT=900000` in its environment as a fallback.
+  `MCP_TOOL_TIMEOUT` in its environment to at least the `timeout_seconds`
+  you use, in milliseconds, as a fallback — `MCP_TOOL_TIMEOUT=3600000` to
+  cover the 3600s default. A smaller value (e.g. `900000`) caps such calls
+  client-side well before the server hard kill fires.
 - On Windows, codex runs with `-c windows.sandbox="unelevated"`: a
   user-level `sandbox = "elevated"` config cannot complete its setup when
   codex runs headless (all shell commands fail with "windows sandbox: spawn
