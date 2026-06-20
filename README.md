@@ -11,9 +11,10 @@ ask Codex/Gemini, or host it in Codex/Gemini to ask Claude.
 | `ask_gemini` | One-shot question to `gemini` non-interactive mode (writes auto-denied) |
 | `ask_claude` | One-shot question to `claude -p` (edits/shell/network tools denied)     |
 
-Both tools take `prompt` (required), `cwd` (project root the agent may read),
-`model` (optional override), and `timeout_seconds` (default 3600, the max). Calls are
-stateless; Claude can invoke both tools in parallel.
+Each tool takes `prompt` (required), `cwd` (project root the agent may read),
+`model` (optional — omit to auto-select the smartest model the agent can run;
+see [Model selection](#model-selection)), and `timeout_seconds` (default 3600,
+the max). Calls are stateless and can run in parallel.
 
 ## Build
 
@@ -71,6 +72,38 @@ Each tool only needs its own CLI, so install the ones you'll ask:
   `SECOND_OPINION_CODEX_JS` / `SECOND_OPINION_GEMINI_JS` to the absolute path
   of each CLI's JS entry point, or `SECOND_OPINION_CLAUDE_CLI` to the claude
   executable or its npm `cli.js`.
+
+## Model selection
+
+When you omit `model`, each agent **auto-selects the smartest model it can
+actually run**, with graceful fallback. Each agent resolves an ordered list of
+candidates (smartest first); the first that answers wins and is cached for the
+rest of the process. A candidate that fails with a *model-unavailable* error
+(tier-gated, retired, or temporarily disabled) is skipped and the next is tried;
+any other failure is returned as-is. This means a model going offline (e.g.
+Claude Fable being disabled) or being absent from your tier (e.g. a free-tier
+key can't run `gemini-2.5-pro`) is handled automatically, and a model coming
+back online is picked up on the next server start.
+
+| Agent  | Default candidates (smartest → fallback)                                  |
+| ------ | ------------------------------------------------------------------------- |
+| codex  | the `codex` CLI's own flagship model (no `-m` passed)                      |
+| gemini | discovered from the ListModels API and ranked (newest generation first, then pro > flash > flash-lite within a generation), else the `gemini-pro-latest` → `gemini-flash-latest` → `gemini-2.5-pro` → `gemini-2.5-flash` curated list |
+| claude | `claude-fable-5` → `claude-opus-4-8`                                       |
+
+- **Gemini discovery needs `GEMINI_API_KEY` in the server's environment.** With
+  it, the smartest model your key can run is discovered live via the ListModels
+  REST API. Without it (e.g. the OAuth-only setup), the curated list leads with
+  Google's `gemini-{pro,flash}-latest` aliases, which Google hot-swaps to the
+  current generation server-side — so no-key users still reach the newest models
+  without this server being updated. Either way, `gemini-2.5-flash` is the final
+  safety net, and tier-gated models (`limit: 0`) are skipped automatically.
+- **Per-call override:** pass `model` on the tool call to force a specific model
+  (skips discovery and fallback).
+- **Persistent override:** set `SECOND_OPINION_CODEX_MODEL`,
+  `SECOND_OPINION_GEMINI_MODEL`, or `SECOND_OPINION_CLAUDE_MODEL` to pin a
+  default model for that agent.
+- `npm run doctor` prints the model each agent actually used.
 
 ## Notes
 

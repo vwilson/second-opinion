@@ -1,23 +1,6 @@
-import { rm } from "node:fs/promises";
 import os from "node:os";
-import {
-  type AgentResult,
-  type CliCommand,
-  cleanGeminiOutput,
-  killAllAgents,
-  readFileCapped,
-  resolveClaudeCli,
-  runAgent,
-} from "./agents.js";
-import {
-  buildClaudeArgv,
-  buildCodexArgv,
-  buildGeminiArgv,
-  geminiExtraEnv,
-  newCodexOutFile,
-  resolveCodexEntry,
-  resolveGeminiEntry,
-} from "./clis.js";
+import { type AgentResult, killAllAgents } from "./agents.js";
+import { AGENTS, type AgentDef, runAgentWithFallback } from "./registry.js";
 
 const DOCTOR_PROMPT =
   "This is an automated health check. Reply with the single word OK and nothing else.";
@@ -54,107 +37,44 @@ function okLine(result: AgentResult, answer: string): string {
   return `result: OK in ${seconds}s — "${snippet}"`;
 }
 
-async function checkCodex(cwd: string): Promise<DoctorReport> {
-  let entry: string;
+/**
+ * Resolve the CLI and run the health-check prompt through it, exercising the
+ * same model-candidate fallback the live tools use, and report which model
+ * actually answered.
+ */
+async function check(def: AgentDef, cwd: string): Promise<DoctorReport> {
+  let cli: ReturnType<AgentDef["resolveCli"]>;
   try {
-    entry = resolveCodexEntry();
+    cli = def.resolveCli();
   } catch (err) {
-    return { name: "codex", ok: false, lines: [errorMessage(err)] };
+    return { name: def.name, ok: false, lines: [errorMessage(err)] };
   }
-  const outFile = newCodexOutFile();
-  try {
-    const result = await runAgent({
-      command: process.execPath,
-      argv: [entry, ...buildCodexArgv(cwd, outFile)],
-      prompt: DOCTOR_PROMPT,
-      cwd,
-      timeoutMs: DOCTOR_TIMEOUT_MS,
-      onProgress: async () => {},
-    });
-    const lines = [`entry: ${entry}`];
-    if (!result.ok) {
-      return {
-        name: "codex",
-        ok: false,
-        lines: [...lines, ...failureLines(result)],
-      };
-    }
-    let answer = "";
-    try {
-      answer = (await readFileCapped(outFile)).trim();
-    } catch {
-      // fall back to stdout below
-    }
-    if (!answer) answer = result.output.trim();
-    return {
-      name: "codex",
-      ok: true,
-      lines: [...lines, okLine(result, answer)],
-    };
-  } finally {
-    await rm(outFile, { force: true });
-  }
-}
 
-async function checkGemini(cwd: string): Promise<DoctorReport> {
-  let entry: string;
-  try {
-    entry = resolveGeminiEntry();
-  } catch (err) {
-    return { name: "gemini", ok: false, lines: [errorMessage(err)] };
-  }
-  const result = await runAgent({
-    command: process.execPath,
-    argv: [entry, ...buildGeminiArgv()],
-    prompt: DOCTOR_PROMPT,
-    cwd,
-    timeoutMs: DOCTOR_TIMEOUT_MS,
-    extraEnv: geminiExtraEnv(),
-    onProgress: async () => {},
-  });
-  const lines = [`entry: ${entry}`];
-  if (!result.ok) {
-    return {
-      name: "gemini",
-      ok: false,
-      lines: [...lines, ...failureLines(result)],
-    };
-  }
-  const answer = cleanGeminiOutput(result.output);
-  return {
-    name: "gemini",
-    ok: true,
-    lines: [...lines, okLine(result, answer)],
-  };
-}
-
-async function checkClaude(cwd: string): Promise<DoctorReport> {
-  let cli: CliCommand;
-  try {
-    cli = resolveClaudeCli();
-  } catch (err) {
-    return { name: "claude", ok: false, lines: [errorMessage(err)] };
-  }
-  const result = await runAgent({
-    command: cli.command,
-    argv: [...cli.prefixArgs, ...buildClaudeArgv()],
+  const outcome = await runAgentWithFallback(def, cli, {
+    requested: undefined,
     prompt: DOCTOR_PROMPT,
     cwd,
     timeoutMs: DOCTOR_TIMEOUT_MS,
     onProgress: async () => {},
+    remember: false,
   });
+
   const lines = [`entry: ${[cli.command, ...cli.prefixArgs].join(" ")}`];
-  if (!result.ok) {
+  if (!outcome.ok) {
     return {
-      name: "claude",
+      name: def.name,
       ok: false,
-      lines: [...lines, ...failureLines(result)],
+      lines: [...lines, ...failureLines(outcome.result)],
     };
   }
   return {
-    name: "claude",
+    name: def.name,
     ok: true,
-    lines: [...lines, okLine(result, result.output)],
+    lines: [
+      ...lines,
+      `model: ${outcome.model ?? "(CLI default)"}`,
+      okLine(outcome.result, outcome.answer),
+    ],
   };
 }
 
@@ -176,11 +96,7 @@ export async function runDoctor(): Promise<number> {
   console.log(
     "second-opinion doctor — sending a one-line prompt through each CLI (can take a minute)..."
   );
-  const reports = await Promise.all([
-    checkCodex(cwd),
-    checkGemini(cwd),
-    checkClaude(cwd),
-  ]);
+  const reports = await Promise.all(AGENTS.map((def) => check(def, cwd)));
 
   for (const report of reports) {
     console.log(`\n${report.name}:`);
