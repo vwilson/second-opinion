@@ -44,6 +44,14 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # The marketplace code-review command spawns Haiku/Sonnet subagents
+          # (Task) and posts its verdict with `gh pr comment`. With no explicit
+          # allow-list those calls are permission-denied in CI, so the review
+          # runs but silently posts nothing. Grant exactly the read-only tools
+          # it needs plus the one write it requires (gh pr comment), mirroring
+          # the command's own allowed-tools frontmatter (least privilege).
+          claude_args: |
+            --allowedTools "Task,TodoWrite,Read,Glob,Grep,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
