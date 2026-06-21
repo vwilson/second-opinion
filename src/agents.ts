@@ -410,6 +410,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
     const stderrCol = makeStreamCollector();
     let timedOut = false;
     let settled = false;
+    let postKillGraceTimer: NodeJS.Timeout | undefined;
 
     const pid = child.pid;
     if (pid !== undefined) {
@@ -448,6 +449,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
       settled = true;
       clearInterval(progressTimer);
       clearTimeout(killTimer);
+      if (postKillGraceTimer) clearTimeout(postKillGraceTimer);
       resolve({
         ok: !timedOut && exitCode === 0,
         output: stripAnsi(stdoutCol.read()),
@@ -462,7 +464,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentResult> {
       timedOut = true;
       if (child.pid !== undefined) void killTree(child.pid);
       // if the streams never close after the kill, settle anyway
-      setTimeout(() => settle(null), POST_KILL_GRACE_MS);
+      postKillGraceTimer = setTimeout(() => settle(null), POST_KILL_GRACE_MS);
     }, opts.timeoutMs);
 
     child.on("error", (err) => {
