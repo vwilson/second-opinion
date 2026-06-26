@@ -355,23 +355,30 @@ export function resolveNativeOrNpmCli(cli: NativeOrNpmCli): CliCommand {
       }
     }
   } else {
+    // Prefer a native binary over the npm global the way the Windows branch
+    // does: scan ALL of PATH for a native install first, and only fall back to
+    // the npm loader (run via node) if no native binary is found. Otherwise an
+    // npm shim earlier in PATH would shadow a working native binary later on it.
+    let npmFallback: CliCommand | undefined;
     for (const dir of pathDirs) {
       const shim = path.join(dir, cli.name);
       if (!existsSync(shim)) continue;
       try {
         const target = realpathSync(shim);
-        // npm global: bin symlink straight to the package's JS entry → node.
-        // native installer: a standalone binary (possibly symlinked into
-        // ~/.local/bin) → run it directly.
-        return remember(
-          target.endsWith(expectedSuffix)
-            ? { command: process.execPath, prefixArgs: [target] }
-            : { command: target, prefixArgs: [] }
-        );
+        if (target.endsWith(expectedSuffix)) {
+          // npm global: bin symlink straight to the package's JS entry → node.
+          // Remember the first one, but keep scanning for a native binary.
+          npmFallback ??= { command: process.execPath, prefixArgs: [target] };
+        } else {
+          // native installer: a standalone binary (possibly symlinked into
+          // ~/.local/bin) → run it directly, preferred.
+          return remember({ command: target, prefixArgs: [] });
+        }
       } catch {
         // symlink loop, permissions, etc.; try the next PATH entry
       }
     }
+    if (npmFallback) return remember(npmFallback);
   }
 
   throw new Error(

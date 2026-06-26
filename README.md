@@ -189,12 +189,10 @@ back online is picked up on the next server start.
   left alone: like any LLM CLI, the model call itself goes to the endpoint the
   operator configured (GitHub by default); that's not part of the model's
   tool-network surface, which stays blocked.
-- `ask_copilot` passes the prompt as a `--prompt=` command-line value: the
-  Copilot CLI has no stdin-prompt support yet ([copilot-cli
-  #1046](https://github.com/github/copilot-cli/issues/1046)), so unlike the
-  other agents (which use stdin) the prompt is **visible in process listings**
-  (`ps`/`/proc`) while the call runs, and a very large prompt can hit the OS
-  argument-length limit. It also runs with `--silent` (only the final answer,
+- `ask_copilot` feeds the prompt over **stdin**, like the other agents: it runs
+  Copilot with no `-p`/`--prompt`, and a non-TTY stdin is read as the prompt, so
+  the prompt never appears on the command line (no `ps`/`/proc` exposure, no OS
+  argument-length limit). It also runs with `--silent` (only the final answer,
   no tool-run chrome) and `--no-auto-update` (no mid-call self-update).
 - The server keeps long agent calls alive by sending MCP progress
   notifications every 10s. If a client ignores progress, set

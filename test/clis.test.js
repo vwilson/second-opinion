@@ -106,7 +106,7 @@ test("buildClaudeArgv passes the model override through", () => {
 });
 
 test("buildCopilotArgv produces a read-only non-interactive invocation", () => {
-  const argv = buildCopilotArgv(undefined, "review this code");
+  const argv = buildCopilotArgv();
   // non-interactive, clean, isolated
   assert.ok(argv.includes("--silent"), "must print only the agent response");
   assert.ok(argv.includes("--no-auto-update"), "must not pause to self-update");
@@ -141,19 +141,18 @@ test("buildCopilotArgv produces a read-only non-interactive invocation", () => {
     "the OS temp-dir read exception is dropped"
   );
   assert.ok(!argv.includes("--model"), "no model flag unless requested");
-  // the prompt is an argv value (no stdin support); the `=` form keeps a
-  // dash-leading prompt from being parsed as a flag
-  assert.equal(argv.at(-1), "--prompt=review this code");
+  // the prompt is fed over stdin (like the other agents), never in argv: no
+  // `-p`/`--prompt`, so a non-TTY stdin is read as the prompt
+  assert.ok(!argv.includes("-p"), "no -p, so stdin is read as the prompt");
+  assert.ok(
+    !argv.some((a) => a === "--prompt" || a.startsWith("--prompt=")),
+    "the prompt must not appear on the command line"
+  );
 });
 
-test("buildCopilotArgv passes the model and keeps a dash-leading prompt safe", () => {
-  const argv = buildCopilotArgv("auto", "--look at this");
+test("buildCopilotArgv passes the model override through", () => {
+  const argv = buildCopilotArgv("auto");
   assert.equal(argv[argv.indexOf("--model") + 1], "auto");
-  assert.equal(
-    argv.at(-1),
-    "--prompt=--look at this",
-    "prompt must be bound with = so it is not read as a flag"
-  );
 });
 
 test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {

@@ -255,16 +255,12 @@ export function cleanupCopilotHomes(): void {
   activeCopilotHomes.clear();
 }
 
-export function buildCopilotArgv(
-  model: string | undefined,
-  prompt: string
-): string[] {
+export function buildCopilotArgv(model?: string): string[] {
   return [
-    // Non-interactive: run one prompt and exit. Copilot has no stdin-prompt
-    // support yet (github/copilot-cli #1046), so the prompt is passed as an
-    // argv value — it is visible in process listings, and very large prompts
-    // can hit the OS argument-length limit. The `--prompt=` (`=`) form keeps a
-    // prompt that starts with "-" from being parsed as a flag.
+    // Non-interactive: with NO `-p`/`--prompt` and a non-TTY stdin, Copilot
+    // reads the piped prompt and exits (runAgent writes it to stdin, like the
+    // other agents). This keeps the prompt off the command line — no
+    // process-listing exposure and no OS argument-length limit.
     "--silent", // print only the final agent response, no tool-run chrome
     "--no-color", // plain text (NO_COLOR is also set on the child env)
     "--no-auto-update", // don't pause to download a CLI update mid-call
@@ -291,7 +287,6 @@ export function buildCopilotArgv(
     // temp-dir half so reads stay within the cwd.
     "--disallow-temp-dir",
     ...(model ? ["--model", model] : []),
-    `--prompt=${prompt}`,
   ];
 }
 

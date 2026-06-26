@@ -8,9 +8,8 @@ behavior, see `README.md`.
 An MCP (stdio) server that exposes local CLI coding agents — **Codex**,
 **Gemini**, **Claude Code**, **GitHub Copilot** — as one-shot, read-only
 "second opinion" tools (`ask_codex` / `ask_gemini` / `ask_claude` /
-`ask_copilot`). Each call spawns the agent's CLI, feeds the prompt (over stdin,
-or — for copilot, which has no stdin-prompt support — as a `--prompt=` argv
-value), and returns the final answer. TypeScript, ESM, Node ≥ 20; build with
+`ask_copilot`). Each call spawns the agent's CLI, feeds the prompt over stdin,
+and returns the final answer. TypeScript, ESM, Node ≥ 20; build with
 `npm run build`, test with `npm test` (`node --test` against `dist/`), lint with
 `npm run lint` (Biome).
 
@@ -22,7 +21,7 @@ is an `AgentDef` edit, not a handler/doctor edit**.
 | File              | Responsibility                                                                 |
 | ----------------- | ------------------------------------------------------------------------------ |
 | `src/agents.ts`   | `runAgent` (spawn + bounded stream capture + timeout/kill), CLI resolution (`resolveCliEntry` for npm globals; `resolveNativeOrNpmCli` shared by claude/copilot), output helpers. No agent-specific logic. |
-| `src/clis.ts`     | Per-CLI argv builders (`build{Codex,Gemini,Claude,Copilot}Argv`) and `geminiExtraEnv`. Pure; each takes an optional model (copilot's also takes the prompt). |
+| `src/clis.ts`     | Per-CLI argv builders (`build{Codex,Gemini,Claude,Copilot}Argv`), `geminiExtraEnv`/`copilotExtraEnv`, and copilot's isolated-home helpers. Pure builders; each takes an optional model. |
 | `src/models.ts`   | Gemini model discovery (`listGeminiModels`) + ranking (`rankGeminiModels`), curated fallbacks, and the shared `SAFE_MODEL_RE`. |
 | `src/registry.ts` | The `AgentDef` interface, the four agent definitions (`AGENTS`), per-agent model resolution + cache, and `runAgentWithFallback`. |
 | `src/index.ts`    | MCP wiring: one generic handler registered for every `AgentDef`; input schema; drain-on-stdin-close. |
@@ -127,8 +126,8 @@ in `registry.ts` and add a case to `test/models.test.js`.
   GitHub sync). `copilotExtraEnv` additionally scrubs scope-widening env
   (`COPILOT_CUSTOM_INSTRUCTIONS_DIRS`/`COPILOT_SKILLS_DIRS` → empty, every
   `GITHUB_COPILOT_PROMPT_MODE_*` → false). Only machine-admin policy hooks can
-  still run. Its prompt rides in a `--prompt=` argv value (no stdin support yet,
-  github/copilot-cli #1046), so it's visible in process listings and very large
-  prompts can hit the OS arg-length limit.
+  still run. Its prompt is fed over stdin like the other agents (run with no
+  `-p`, so a non-TTY stdin is read as the prompt) — off the command line, no
+  process-listing exposure or arg-length limit.
 - Match the existing style (2-space indent, double quotes); run `npm run lint`
   before finishing.

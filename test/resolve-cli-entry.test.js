@@ -217,6 +217,33 @@ if (isWindows) {
       )
     );
   });
+
+  test("posix: nativeOrNpm prefers a native binary even if npm is earlier on PATH", async (t) => {
+    const prefix = await makeTempDir(t);
+    const cli = uniqueCli();
+    // npm install: an earlier PATH dir whose shim symlinks to the package entry
+    const npmBin = path.join(prefix, "npm-bin");
+    const entry = path.join(
+      prefix,
+      "lib",
+      "node_modules",
+      ...cli.pkgEntry.split("/")
+    );
+    await mkdir(npmBin, { recursive: true });
+    await mkdir(path.dirname(entry), { recursive: true });
+    await writeFile(entry, "// loader\n");
+    await symlink(entry, path.join(npmBin, cli.name));
+    // native install: a later PATH dir with a standalone binary
+    const nativeBin = path.join(prefix, "native-bin");
+    await mkdir(nativeBin, { recursive: true });
+    await writeFile(path.join(nativeBin, cli.name), "#!/bin/sh\n");
+    // npm dir FIRST on PATH — the native binary must still win
+    withPath(t, [npmBin, nativeBin]);
+
+    const cmd = resolveNativeOrNpmCli(cli);
+    assert.deepEqual(cmd.prefixArgs, [], "the native binary is run directly");
+    assert.ok(cmd.command.endsWith(path.join("native-bin", cli.name)));
+  });
 }
 
 if (isWindows) {

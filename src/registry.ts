@@ -58,13 +58,7 @@ export interface AgentDef {
   /** locate the CLI; may throw if it isn't installed */
   resolveCli(): CliCommand;
   prepareContext(cwd: string): AgentContext;
-  /** the prompt is passed too: most agents feed it over stdin and ignore it
-   * here, but copilot has no stdin-prompt support and takes it as an argv value */
-  buildArgv(
-    model: string | undefined,
-    ctx: AgentContext,
-    prompt: string
-  ): string[];
+  buildArgv(model: string | undefined, ctx: AgentContext): string[];
   /** extra env for the spawned CLI; receives the context so copilot can point
    * COPILOT_HOME at its per-call isolated config dir */
   extraEnv(ctx: AgentContext): Record<string, string> | undefined;
@@ -308,9 +302,7 @@ const COPILOT: AgentDef = {
     "an OS sandbox). Each call runs against an isolated, throwaway config home, so the user's own " +
     "MCP servers, hooks, and saved permissions are not loaded and the session transcript is " +
     "ephemeral (not persisted to ~/.copilot or synced to GitHub). Copilot auto-selects an " +
-    "appropriate model for your account (override per call with `model`). Note: Copilot has no " +
-    "stdin-prompt support, so the prompt is passed on the command line — it is visible in process " +
-    "listings, and a very large prompt may exceed the OS argument-length limit. Use for: reviewing " +
+    "appropriate model for your account (override per call with `model`). Use for: reviewing " +
     "a plan or diff, debugging hypotheses, architecture trade-offs, or cross-checking your own " +
     "conclusion. Calls typically take 1-5 minutes. May be called in parallel with the other tools.",
   annotations: { readOnlyHint: true, openWorldHint: false },
@@ -319,7 +311,7 @@ const COPILOT: AgentDef = {
   // MCP servers / hooks / saved permissions don't load and the session is
   // ephemeral; see newCopilotHome.
   prepareContext: (cwd) => ({ cwd, copilotHome: newCopilotHome() }),
-  buildArgv: (model, _ctx, prompt) => buildCopilotArgv(model, prompt),
+  buildArgv: (model) => buildCopilotArgv(model),
   extraEnv: (ctx) =>
     ctx.copilotHome ? copilotExtraEnv(ctx.copilotHome) : undefined,
   // single candidate ("auto"); a per-call / env-override model still flows
@@ -396,7 +388,7 @@ export async function runAgentWithFallback(
     try {
       const result = await runAgent({
         command: cli.command,
-        argv: [...cli.prefixArgs, ...def.buildArgv(model, ctx, opts.prompt)],
+        argv: [...cli.prefixArgs, ...def.buildArgv(model, ctx)],
         prompt: opts.prompt,
         cwd: opts.cwd,
         timeoutMs: remainingMs,
