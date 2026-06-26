@@ -1,5 +1,6 @@
 import os from "node:os";
 import { type AgentResult, killAllAgents } from "./agents.js";
+import { cleanupCopilotHomes } from "./clis.js";
 import { AGENTS, type AgentDef, runAgentWithFallback } from "./registry.js";
 
 const DOCTOR_PROMPT =
@@ -92,6 +93,8 @@ export async function runDoctor(): Promise<number> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  // remove any throwaway copilot homes on exit (forced or normal)
+  process.on("exit", cleanupCopilotHomes);
 
   console.log(
     "second-opinion doctor — sending a one-line prompt through each CLI (can take a minute)..."

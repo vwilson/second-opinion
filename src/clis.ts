@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -111,38 +111,57 @@ export function buildClaudeArgv(model?: string): string[] {
   ];
 }
 
+// Active throwaway COPILOT_HOMEs, so a forced shutdown (SIGINT/SIGTERM while a
+// call is still running) can remove any whose per-call cleanup didn't run.
+const activeCopilotHomes = new Set<string>();
+
+// config.json is JSON-with-comments; strip whole-line `//` comments (never a
+// `//` inside a quoted value, which is not at the start of a line) before
+// parsing.
+function parseJsonc(text: string): unknown {
+  return JSON.parse(text.replace(/^\s*\/\/.*$/gm, ""));
+}
+
 /**
  * Create a throwaway COPILOT_HOME so each ask_copilot call runs with an
  * isolated config: the user's own MCP servers, hooks, plugins, and saved
  * permissions (all keyed off ~/.copilot) are not loaded, the workspace is
- * treated as untrusted (so a repo's `.github/hooks` don't run), and the session
- * transcript stays in this dir (removed in cleanup) instead of persisting to
- * ~/.copilot/session-state. `disableAllHooks` is also written explicitly as
- * defense-in-depth — it disables repo- and user-level hooks (policy hooks, set
- * by a machine admin, can't be and are trusted).
+ * treated as untrusted (so a repo's `.github/hooks` and `.mcp.json` don't run),
+ * and the session transcript stays in this dir (removed in cleanup) instead of
+ * persisting to ~/.copilot/session-state. `disableAllHooks` is also written
+ * explicitly as defense-in-depth — it disables repo- and user-level hooks
+ * (policy hooks, set by a machine admin, can't be and are trusted).
  */
 export function newCopilotHome(): string {
   const dir = path.join(os.tmpdir(), `second-opinion-copilot-${randomUUID()}`);
   // 0700: the live session transcript (prompts + responses) lands in here, so
   // keep other local users on a shared host from reading it before cleanup.
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  activeCopilotHomes.add(dir);
 
-  // Preserve auth without importing the rest of the user's config: a headless
-  // login with no OS keychain stores the OAuth token in <home>/config.json
-  // (Copilot's storeTokenPlaintext fallback), so copy just that one file —
-  // otherwise pointing COPILOT_HOME at a fresh dir would log such a user out.
-  // mcp-config.json, hooks/, plugins/, and the user's settings.json are
-  // deliberately NOT copied; that isolation is the whole point.
+  // Preserve auth WITHOUT importing trust or settings: a headless login with no
+  // OS keychain stores the token in <home>/config.json (Copilot's
+  // storeTokenPlaintext fallback). Copy ONLY the auth field (`loggedInUsers`)
+  // into the isolated home — never `trustedFolders`, `installedPlugins`, or
+  // migrated legacy settings — so the workspace stays untrusted. A keychain
+  // login keeps no token here and needs nothing copied.
   const srcHome =
     process.env.COPILOT_HOME ?? path.join(os.homedir(), ".copilot");
   const srcConfig = path.join(srcHome, "config.json");
   if (existsSync(srcConfig)) {
     try {
-      const destConfig = path.join(dir, "config.json");
-      copyFileSync(srcConfig, destConfig);
-      chmodSync(destConfig, 0o600); // may hold a plaintext token
+      const cfg = parseJsonc(readFileSync(srcConfig, "utf8"));
+      if (cfg && typeof cfg === "object" && "loggedInUsers" in cfg) {
+        writeFileSync(
+          path.join(dir, "config.json"),
+          JSON.stringify({
+            loggedInUsers: (cfg as { loggedInUsers: unknown }).loggedInUsers,
+          }),
+          { mode: 0o600 } // may hold a plaintext token
+        );
+      }
     } catch {
-      // best effort; a keychain-based login doesn't need this file
+      // unreadable / non-JSON / no plaintext token; keychain logins don't need it
     }
   }
 
@@ -152,6 +171,32 @@ export function newCopilotHome(): string {
     { mode: 0o600 }
   );
   return dir;
+}
+
+/** Remove one isolated home and stop tracking it (per-call cleanup). */
+export function removeCopilotHome(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best effort
+  }
+  activeCopilotHomes.delete(dir);
+}
+
+/**
+ * Remove every isolated home still tracked. Runs from a `process.on("exit")`
+ * hook so a forced shutdown (where the per-call cleanup never got to run) does
+ * not leave token-bearing temp dirs behind. Sync, because exit hooks must be.
+ */
+export function cleanupCopilotHomes(): void {
+  for (const dir of activeCopilotHomes) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best effort; a still-running child may hold files open on Windows
+    }
+  }
+  activeCopilotHomes.clear();
 }
 
 export function buildCopilotArgv(

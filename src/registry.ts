@@ -17,6 +17,7 @@ import {
   geminiExtraEnv,
   newCodexOutFile,
   newCopilotHome,
+  removeCopilotHome,
   resolveCodexEntry,
   resolveGeminiEntry,
 } from "./clis.js";
@@ -331,9 +332,7 @@ const COPILOT: AgentDef = {
   // just trim, like claude.
   extractAnswer: async (result) => result.output.trim(),
   cleanup: async (ctx) => {
-    if (ctx.copilotHome) {
-      await rm(ctx.copilotHome, { recursive: true, force: true });
-    }
+    if (ctx.copilotHome) removeCopilotHome(ctx.copilotHome);
   },
 };
 

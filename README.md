@@ -168,10 +168,12 @@ back online is picked up on the next server start.
   `--no-remote-export`, not synced to GitHub web/mobile. Only machine-admin
   *policy* hooks (which Copilot never lets a session disable) can still run.
   The isolated home is created `0700` so other local users can't read the
-  transcript, and the OAuth token is preserved: Copilot keeps it in the OS
-  keychain (used directly), or — on a headless host with no keychain — in
-  `config.json`, the one file we copy into the isolated home, so a
-  `/login`-only setup keeps working.
+  transcript. Auth is preserved: Copilot keeps the token in the OS keychain
+  (used directly), or — on a headless host with no keychain — in `config.json`,
+  from which we copy **only** the `loggedInUsers` auth field (never trust state,
+  plugins, or settings), so a `/login`-only setup keeps working without
+  re-trusting the workspace. Any throwaway home left by a forced shutdown
+  (SIGINT/SIGTERM mid-call) is swept on process exit.
 - `ask_copilot` passes the prompt as a `--prompt=` command-line value: the
   Copilot CLI has no stdin-prompt support yet ([copilot-cli
   #1046](https://github.com/github/copilot-cli/issues/1046)), so unlike the

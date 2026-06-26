@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,9 +16,11 @@ import {
   buildCodexArgv,
   buildCopilotArgv,
   buildGeminiArgv,
+  cleanupCopilotHomes,
   geminiExtraEnv,
   newCodexOutFile,
   newCopilotHome,
+  removeCopilotHome,
 } from "../dist/clis.js";
 
 test("buildCodexArgv produces the read-only exec invocation", () => {
@@ -145,8 +154,8 @@ test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {
   const a = newCopilotHome();
   const b = newCopilotHome();
   t.after(() => {
-    rmSync(a, { recursive: true, force: true });
-    rmSync(b, { recursive: true, force: true });
+    removeCopilotHome(a);
+    removeCopilotHome(b);
   });
   assert.notEqual(a, b, "each call gets its own isolated home");
   assert.equal(path.dirname(a), os.tmpdir());
@@ -163,6 +172,58 @@ test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {
     true,
     "repo- and user-level hooks are disabled"
   );
+});
+
+test("newCopilotHome copies only the auth field, not trust/plugins", (t) => {
+  // a source home whose config.json (JSON-with-comments) mixes auth with
+  // isolation-breaking keys
+  const src = mkdtempSync(path.join(os.tmpdir(), "second-opinion-srchome-"));
+  writeFileSync(
+    path.join(src, "config.json"),
+    '// managed automatically\n{ "loggedInUsers": [{ "login": "me" }], ' +
+      '"trustedFolders": ["/some/repo"], "installedPlugins": ["p"], ' +
+      '"firstLaunchAt": "x" }'
+  );
+  const prev = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = src;
+  let home;
+  try {
+    home = newCopilotHome();
+  } finally {
+    if (prev === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = prev;
+  }
+  t.after(() => {
+    removeCopilotHome(home);
+    rmSync(src, { recursive: true, force: true });
+  });
+
+  const copied = JSON.parse(
+    readFileSync(path.join(home, "config.json"), "utf8")
+  );
+  assert.deepEqual(
+    Object.keys(copied),
+    ["loggedInUsers"],
+    "only the auth field is copied"
+  );
+  assert.ok(!("trustedFolders" in copied), "trust must not be imported");
+  assert.ok(!("installedPlugins" in copied), "plugins must not be imported");
+});
+
+test("cleanupCopilotHomes removes every tracked home (forced-shutdown path)", () => {
+  const a = newCopilotHome();
+  const b = newCopilotHome();
+  assert.ok(existsSync(a) && existsSync(b));
+  cleanupCopilotHomes();
+  assert.ok(!existsSync(a), "tracked home a is removed");
+  assert.ok(!existsSync(b), "tracked home b is removed");
+});
+
+test("removeCopilotHome removes a single home", () => {
+  const a = newCopilotHome();
+  assert.ok(existsSync(a));
+  removeCopilotHome(a);
+  assert.ok(!existsSync(a), "the home is removed");
 });
 
 test("geminiExtraEnv enables GCA only when no other auth is configured", () => {

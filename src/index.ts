@@ -9,6 +9,7 @@ import {
   killAllAgents,
   truncateMiddle,
 } from "./agents.js";
+import { cleanupCopilotHomes } from "./clis.js";
 import { SAFE_MODEL_RE } from "./models.js";
 import { AGENTS, type AgentDef, runAgentWithFallback } from "./registry.js";
 
@@ -221,3 +222,6 @@ function shutdown() {
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// last-resort cleanup of any throwaway copilot homes whose per-call cleanup
+// didn't run (e.g. a forced shutdown mid-call); runs on every process exit.
+process.on("exit", cleanupCopilotHomes);
