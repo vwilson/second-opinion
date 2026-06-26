@@ -56,12 +56,9 @@ GitHub Copilot CLI:
 copilot mcp add second-opinion -- node /path/to/second-opinion/dist/index.js
 ```
 
-This registers the server in `~/.copilot/mcp-config.json`. Be aware that
-`ask_copilot` itself spawns Copilot, which reloads that same config (Copilot has
-no `--strict-mcp-config` equivalent) — so once registered here, a Copilot the
-server spawns also sees `second-opinion`. Harmless for `ask_codex`/`ask_gemini`/
-`ask_claude`, but it means `ask_copilot`'s read-only guarantee depends on what
-else you've registered (see [Notes](#notes)).
+(`ask_copilot` runs each call against an isolated config home, so registering
+`second-opinion` here does not cause the spawned Copilot to re-load it — no
+recursion. See [Notes](#notes).)
 
 ## Prerequisites
 
@@ -153,16 +150,24 @@ back online is picked up on the next server start.
   MCP server (no GitHub API/network), and `--disallow-temp-dir` drops Copilot's
   default access to the OS temp directory (its default read scope is the cwd
   plus the temp dir), keeping reads within the given cwd. Like `ask_gemini`,
-  this is CLI policy, not an OS sandbox. Note: Copilot has no
-  `--strict-mcp-config` equivalent, so unlike `ask_claude` it still loads any
-  MCP servers you've configured in `~/.copilot/mcp-config.json`; the deny rules
-  only cover Copilot's built-in tools, so don't add write-capable servers there
-  (or register this server itself — see the registration note above) if you
-  rely on `ask_copilot` staying read-only.
+  this is CLI policy, not an OS sandbox.
+- `ask_copilot` runs each call against an **isolated, throwaway config home**:
+  it points `COPILOT_HOME` at a fresh temp dir (removed afterward), which Copilot
+  lacks a `--strict-mcp-config` equivalent for otherwise. This means the user's
+  own `~/.copilot/mcp-config.json` servers do not load (closing the gap that
+  deny rules cover only built-in tools), user/plugin hooks do not load, the
+  workspace is treated as untrusted so a repo's `.github/hooks` do not run (we
+  also write `disableAllHooks` into the isolated home), and the session
+  transcript is ephemeral — not written to `~/.copilot/session-state` and, with
+  `--no-remote-export`, not synced to GitHub web/mobile. Only machine-admin
+  *policy* hooks (which Copilot never lets a session disable) can still run.
 - `ask_copilot` passes the prompt as a `--prompt=` command-line value: the
-  Copilot CLI has no stdin-prompt support yet, so a very large prompt can hit
-  the OS argument-length limit. It also runs with `--silent` (only the final
-  answer, no tool-run chrome) and `--no-auto-update` (no mid-call self-update).
+  Copilot CLI has no stdin-prompt support yet ([copilot-cli
+  #1046](https://github.com/github/copilot-cli/issues/1046)), so unlike the
+  other agents (which use stdin) the prompt is **visible in process listings**
+  (`ps`/`/proc`) while the call runs, and a very large prompt can hit the OS
+  argument-length limit. It also runs with `--silent` (only the final answer,
+  no tool-run chrome) and `--no-auto-update` (no mid-call self-update).
 - The server keeps long agent calls alive by sending MCP progress
   notifications every 10s. If a client ignores progress, set
   `MCP_TOOL_TIMEOUT` in its environment to at least the `timeout_seconds`

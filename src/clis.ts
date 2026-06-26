@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -104,6 +105,26 @@ export function buildClaudeArgv(model?: string): string[] {
   ];
 }
 
+/**
+ * Create a throwaway COPILOT_HOME so each ask_copilot call runs with an
+ * isolated config: the user's own MCP servers, hooks, plugins, and saved
+ * permissions (all keyed off ~/.copilot) are not loaded, the workspace is
+ * treated as untrusted (so a repo's `.github/hooks` don't run), and the session
+ * transcript stays in this dir (removed in cleanup) instead of persisting to
+ * ~/.copilot/session-state. `disableAllHooks` is also written explicitly as
+ * defense-in-depth — it disables repo- and user-level hooks (policy hooks, set
+ * by a machine admin, can't be and are trusted).
+ */
+export function newCopilotHome(): string {
+  const dir = path.join(os.tmpdir(), `second-opinion-copilot-${randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "settings.json"),
+    JSON.stringify({ disableAllHooks: true })
+  );
+  return dir;
+}
+
 export function buildCopilotArgv(
   model: string | undefined,
   prompt: string
@@ -111,12 +132,13 @@ export function buildCopilotArgv(
   return [
     // Non-interactive: run one prompt and exit. Copilot has no stdin-prompt
     // support yet (github/copilot-cli #1046), so the prompt is passed as an
-    // argv value — very large prompts can hit the OS argument-length limit.
-    // The `--prompt=` (`=`) form keeps a prompt that starts with "-" from
-    // being parsed as a flag.
+    // argv value — it is visible in process listings, and very large prompts
+    // can hit the OS argument-length limit. The `--prompt=` (`=`) form keeps a
+    // prompt that starts with "-" from being parsed as a flag.
     "--silent", // print only the final agent response, no tool-run chrome
     "--no-color", // plain text (NO_COLOR is also set on the child env)
     "--no-auto-update", // don't pause to download a CLI update mid-call
+    "--no-remote-export", // don't export the session to GitHub web/mobile
     // --allow-all-tools is required for non-interactive mode; the deny rules
     // below still win ("denial rules always take precedence over allow rules,
     // even --allow-all-tools"), so read tools auto-run while the dangerous

@@ -16,6 +16,7 @@ import {
   buildGeminiArgv,
   geminiExtraEnv,
   newCodexOutFile,
+  newCopilotHome,
   resolveCodexEntry,
   resolveGeminiEntry,
 } from "./clis.js";
@@ -28,10 +29,12 @@ import {
 } from "./models.js";
 
 // Per-invocation state an agent may need to thread from argv construction
-// through answer extraction (codex writes its final message to a temp file).
+// through answer extraction (codex writes its final message to a temp file;
+// copilot runs against a throwaway config home that is removed in cleanup).
 export interface AgentContext {
   cwd: string;
   outFile?: string;
+  copilotHome?: string;
 }
 
 /**
@@ -60,7 +63,9 @@ export interface AgentDef {
     ctx: AgentContext,
     prompt: string
   ): string[];
-  extraEnv(): Record<string, string> | undefined;
+  /** extra env for the spawned CLI; receives the context so copilot can point
+   * COPILOT_HOME at its per-call isolated config dir */
+  extraEnv(ctx: AgentContext): Record<string, string> | undefined;
   /** ordered model candidates, smartest-first (cache- and override-aware).
    * `budgetMs` bounds any discovery I/O to the call's remaining timeout. */
   resolveModels(
@@ -296,21 +301,25 @@ const COPILOT: AgentDef = {
   description:
     "Get a second opinion from GitHub Copilot (Copilot CLI) running locally with read-only access " +
     "to the user's files. One-shot and stateless: it explores the given cwd, reasons about the " +
-    "code, and returns a single final answer. File edits, shell commands, and network access by " +
-    "Copilot's built-in tools are denied by policy (--deny-tool write/shell/url and the built-in " +
-    "GitHub MCP server disabled; not an OS sandbox). Caveat: Copilot has no way to skip a user's " +
-    "own configured MCP servers, so any in ~/.copilot/mcp-config.json still load and are NOT covered " +
-    "by these deny rules — the read-only guarantee holds only when none are write- or network-" +
-    "capable. Copilot auto-selects an appropriate model for your account (override per call with " +
-    "`model`). Note: Copilot has no stdin-prompt support, so the prompt is passed on the command " +
-    "line — a very large prompt may exceed the OS argument-length limit. Use for: reviewing a plan " +
-    "or diff, debugging hypotheses, architecture trade-offs, or cross-checking your own conclusion. " +
-    "Calls typically take 1-5 minutes. May be called in parallel with the other tools.",
+    "code, and returns a single final answer. File edits, shell commands, and network access are " +
+    "denied by policy (--deny-tool write/shell/url and the built-in GitHub MCP server disabled; not " +
+    "an OS sandbox). Each call runs against an isolated, throwaway config home, so the user's own " +
+    "MCP servers, hooks, and saved permissions are not loaded and the session transcript is " +
+    "ephemeral (not persisted to ~/.copilot or synced to GitHub). Copilot auto-selects an " +
+    "appropriate model for your account (override per call with `model`). Note: Copilot has no " +
+    "stdin-prompt support, so the prompt is passed on the command line — it is visible in process " +
+    "listings, and a very large prompt may exceed the OS argument-length limit. Use for: reviewing " +
+    "a plan or diff, debugging hypotheses, architecture trade-offs, or cross-checking your own " +
+    "conclusion. Calls typically take 1-5 minutes. May be called in parallel with the other tools.",
   annotations: { readOnlyHint: true, openWorldHint: false },
   resolveCli: () => resolveCopilotCli(),
-  prepareContext: (cwd) => ({ cwd }),
+  // each call gets a throwaway COPILOT_HOME (removed in cleanup) so the user's
+  // MCP servers / hooks / saved permissions don't load and the session is
+  // ephemeral; see newCopilotHome.
+  prepareContext: (cwd) => ({ cwd, copilotHome: newCopilotHome() }),
   buildArgv: (model, _ctx, prompt) => buildCopilotArgv(model, prompt),
-  extraEnv: () => undefined,
+  extraEnv: (ctx) =>
+    ctx.copilotHome ? { COPILOT_HOME: ctx.copilotHome } : undefined,
   // single candidate ("auto"); a per-call / env-override model still flows
   // through. Like codex, there is no fallback to advance to.
   resolveModels: async (requested) => {
@@ -321,7 +330,11 @@ const COPILOT: AgentDef = {
   // --silent already limits stdout to the final answer (no tool-run chrome), so
   // just trim, like claude.
   extractAnswer: async (result) => result.output.trim(),
-  cleanup: async () => {},
+  cleanup: async (ctx) => {
+    if (ctx.copilotHome) {
+      await rm(ctx.copilotHome, { recursive: true, force: true });
+    }
+  },
 };
 
 export const AGENTS: AgentDef[] = [CODEX, GEMINI, CLAUDE, COPILOT];
@@ -387,7 +400,7 @@ export async function runAgentWithFallback(
         prompt: opts.prompt,
         cwd: opts.cwd,
         timeoutMs: remainingMs,
-        extraEnv: def.extraEnv(),
+        extraEnv: def.extraEnv(ctx),
         onProgress: opts.onProgress,
       });
       last = result;

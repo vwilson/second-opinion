@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +11,7 @@ import {
   buildGeminiArgv,
   geminiExtraEnv,
   newCodexOutFile,
+  newCopilotHome,
 } from "../dist/clis.js";
 
 test("buildCodexArgv produces the read-only exec invocation", () => {
@@ -99,6 +101,10 @@ test("buildCopilotArgv produces a read-only non-interactive invocation", () => {
   assert.ok(argv.includes("--silent"), "must print only the agent response");
   assert.ok(argv.includes("--no-auto-update"), "must not pause to self-update");
   assert.ok(
+    argv.includes("--no-remote-export"),
+    "must not export the session to GitHub"
+  );
+  assert.ok(
     argv.includes("--allow-all-tools"),
     "required for non-interactive mode"
   );
@@ -132,6 +138,26 @@ test("buildCopilotArgv passes the model and keeps a dash-leading prompt safe", (
     argv.at(-1),
     "--prompt=--look at this",
     "prompt must be bound with = so it is not read as a flag"
+  );
+});
+
+test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {
+  const a = newCopilotHome();
+  const b = newCopilotHome();
+  t.after(() => {
+    rmSync(a, { recursive: true, force: true });
+    rmSync(b, { recursive: true, force: true });
+  });
+  assert.notEqual(a, b, "each call gets its own isolated home");
+  assert.equal(path.dirname(a), os.tmpdir());
+  assert.ok(statSync(a).isDirectory(), "the dir is created");
+  const settings = JSON.parse(
+    readFileSync(path.join(a, "settings.json"), "utf8")
+  );
+  assert.equal(
+    settings.disableAllHooks,
+    true,
+    "repo- and user-level hooks are disabled"
   );
 });
 

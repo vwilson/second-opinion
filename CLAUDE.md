@@ -113,11 +113,15 @@ in `registry.ts` and add a case to `test/models.test.js`.
   (`--deny-tool write/shell/url`, which win because "denial rules always take
   precedence over allow rules, even --allow-all-tools") plus
   `--disable-builtin-mcps`. Don't remove a deny without re-checking the
-  write/shell/network surface. Known gap: Copilot has no `--strict-mcp-config`
-  equivalent, so user-configured MCP servers (`~/.copilot/mcp-config.json`)
-  still load and the deny rules cover only built-in tools — documented in the
-  README. Its prompt rides in a `--prompt=` argv value (no stdin support yet,
-  github/copilot-cli #1046), so very large prompts can hit the OS arg-length
-  limit.
+  write/shell/network surface. Copilot has no `--strict-mcp-config` /
+  `--no-session-persistence` / `--ephemeral` equivalents, so instead each call
+  runs against a throwaway `COPILOT_HOME` (`newCopilotHome`, removed in
+  `cleanup`): the user's MCP servers, hooks, plugins, and saved permissions
+  don't load, the workspace is untrusted (repo `.github/hooks` don't run — plus
+  an explicit `disableAllHooks`), and the session transcript is ephemeral
+  (`--no-remote-export` also blocks the GitHub sync). Only machine-admin policy
+  hooks can still run. Its prompt rides in a `--prompt=` argv value (no stdin
+  support yet, github/copilot-cli #1046), so it's visible in process listings
+  and very large prompts can hit the OS arg-length limit.
 - Match the existing style (2-space indent, double quotes); run `npm run lint`
   before finishing.

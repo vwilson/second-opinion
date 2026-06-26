@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, statSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -265,6 +266,28 @@ test("copilot.isModelUnavailable is always false (no fallback)", () => {
     c.isModelUnavailable({ output: "", stderrTail: "anything at all" }),
     false
   );
+});
+
+test("copilot.extraEnv points COPILOT_HOME at the isolated config dir", () => {
+  const c = agent("copilot");
+  assert.deepEqual(c.extraEnv({ cwd: "/p", copilotHome: "/tmp/iso" }), {
+    COPILOT_HOME: "/tmp/iso",
+  });
+  // no isolated home in the context → no env override
+  assert.equal(c.extraEnv({ cwd: "/p" }), undefined);
+});
+
+test("copilot prepareContext makes an isolated home that cleanup removes", async () => {
+  const c = agent("copilot");
+  const ctx = c.prepareContext("/some/cwd");
+  assert.ok(ctx.copilotHome, "an isolated COPILOT_HOME is allocated");
+  try {
+    assert.ok(statSync(ctx.copilotHome).isDirectory());
+    assert.deepEqual(c.extraEnv(ctx), { COPILOT_HOME: ctx.copilotHome });
+  } finally {
+    await c.cleanup(ctx);
+  }
+  assert.ok(!existsSync(ctx.copilotHome), "cleanup removes the isolated home");
 });
 
 test("the Gemini safety-net model is free-tier reachable", () => {
