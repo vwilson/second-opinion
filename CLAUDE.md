@@ -109,20 +109,26 @@ in `registry.ts` and add a case to `test/models.test.js`.
   process. Discovered Gemini ids are already filtered through it.
 - Keep agents read-only: don't add file-writing or shell-enabling flags.
   Copilot is the loose one — `--allow-all-tools` is required for its
-  non-interactive mode, so its read-only guarantee rests on the deny rules
-  (`--deny-tool write/shell/url`, which win because "denial rules always take
-  precedence over allow rules, even --allow-all-tools") plus
-  `--disable-builtin-mcps`. Don't remove a deny without re-checking the
-  write/shell/network surface. Copilot has no `--strict-mcp-config` /
-  `--no-session-persistence` / `--ephemeral` equivalents, so instead each call
-  runs against a throwaway `COPILOT_HOME` (`newCopilotHome`, removed in
-  `cleanup`): the user's MCP servers, hooks, plugins, and saved permissions
-  don't load, the workspace is untrusted (so repo MCP servers
-  `.mcp.json`/`.github/mcp.json` and `.github/hooks` don't load — verified —
-  plus an explicit `disableAllHooks`), and the session transcript is ephemeral
-  (`--no-remote-export` also blocks the GitHub sync). Only machine-admin policy
-  hooks can still run. Its prompt rides in a `--prompt=` argv value (no stdin
-  support yet, github/copilot-cli #1046), so it's visible in process listings
-  and very large prompts can hit the OS arg-length limit.
+  non-interactive mode, so the primary read-only guarantee is an **allow-list**
+  of the only tools the model may see: `--available-tools=view,grep,glob` (file
+  read + search). That removes write/shell, the network tools
+  (`web_fetch`/`web_search`), `skill` (reads outside cwd), and the rest by
+  construction rather than denying kinds one at a time. The `--deny-tool
+  write/shell/url` kinds + `--disable-builtin-mcps` stay as belt-and-braces
+  (deny beats allow). If you widen `--available-tools`, re-check the
+  write/shell/network/skill surface of whatever you add. Copilot has no
+  `--strict-mcp-config` / `--no-session-persistence` / `--ephemeral`
+  equivalents, so instead each call runs against a throwaway `COPILOT_HOME`
+  (`newCopilotHome`, removed in `cleanup`, swept again on `process.on("exit")`):
+  the user's MCP servers, hooks, plugins, and saved permissions don't load, the
+  workspace is untrusted (so repo MCP servers `.mcp.json`/`.github/mcp.json` and
+  `.github/hooks` don't load — verified — plus an explicit `disableAllHooks`),
+  and the session transcript is ephemeral (`--no-remote-export` also blocks the
+  GitHub sync). `copilotExtraEnv` additionally scrubs scope-widening env
+  (`COPILOT_CUSTOM_INSTRUCTIONS_DIRS`/`COPILOT_SKILLS_DIRS` → empty, every
+  `GITHUB_COPILOT_PROMPT_MODE_*` → false). Only machine-admin policy hooks can
+  still run. Its prompt rides in a `--prompt=` argv value (no stdin support yet,
+  github/copilot-cli #1046), so it's visible in process listings and very large
+  prompts can hit the OS arg-length limit.
 - Match the existing style (2-space indent, double quotes); run `npm run lint`
   before finishing.

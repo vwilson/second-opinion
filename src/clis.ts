@@ -115,11 +115,67 @@ export function buildClaudeArgv(model?: string): string[] {
 // call is still running) can remove any whose per-call cleanup didn't run.
 const activeCopilotHomes = new Set<string>();
 
-// config.json is JSON-with-comments; strip whole-line `//` comments (never a
-// `//` inside a quoted value, which is not at the start of a line) before
-// parsing.
+// Strip `//` line and `/* */` block comments, string-aware so a comment marker
+// inside a quoted value is preserved.
+function stripComments(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\") out += text[++i] ?? "";
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === "/" && text[i + 1] === "/") {
+      i += 2;
+      while (i < text.length && text[i] !== "\n") i++; // the loop's i++ eats \n
+    } else if (c === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i++; // skip the '*'; the loop's i++ skips the '/'
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+// Drop trailing commas before `}`/`]`, string-aware so a comma inside a value
+// is preserved. Run on comment-free text so the lookahead need only skip space.
+function dropTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\") out += text[++i] ?? "";
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === "}" || text[j] === "]") continue; // trailing comma → drop
+    }
+    out += c;
+  }
+  return out;
+}
+
+// Copilot's config.json is JSON-with-comments and may carry trailing commas;
+// parse it tolerantly rather than letting a stray comment silently drop the
+// auth copy (which would log out a no-keychain user).
 function parseJsonc(text: string): unknown {
-  return JSON.parse(text.replace(/^\s*\/\/.*$/gm, ""));
+  return JSON.parse(dropTrailingCommas(stripComments(text)));
 }
 
 /**
@@ -213,17 +269,22 @@ export function buildCopilotArgv(
     "--no-color", // plain text (NO_COLOR is also set on the child env)
     "--no-auto-update", // don't pause to download a CLI update mid-call
     "--no-remote-export", // don't export the session to GitHub web/mobile
-    // --allow-all-tools is required for non-interactive mode; the deny rules
-    // below still win ("denial rules always take precedence over allow rules,
-    // even --allow-all-tools"), so read tools auto-run while the dangerous
-    // ones stay blocked.
+    // Allow-list the tools the model can even see: just file read + search.
+    // This is the primary read-only mechanism — it removes write/shell, the
+    // network tools (web_fetch/web_search), `skill` (which can read outside the
+    // cwd), and everything else by construction, rather than denying the
+    // dangerous ones one kind at a time. --allow-all-tools then auto-approves
+    // these three so the non-interactive run never blocks on a prompt.
+    "--available-tools=view,grep,glob",
     "--allow-all-tools",
+    // Belt-and-braces under the allow-list (deny beats allow): block the tool
+    // kinds outright in case a build ignores --available-tools.
     "--deny-tool",
-    "write", // block file-creating/modifying tools
+    "write", // file-creating/modifying tools
     "--deny-tool",
-    "shell", // block shell exec (also the write-via-redirection vector)
+    "shell", // shell exec (also the write-via-redirection vector)
     "--deny-tool",
-    "url", // block network URL access (the web-fetch tool)
+    "url", // network URL access (web-fetch)
     "--disable-builtin-mcps", // no GitHub MCP server (no network / GitHub writes)
     "--no-ask-user", // never block waiting to ask the user a question
     // Copilot's default read scope is cwd + the OS temp dir; this drops the
@@ -236,18 +297,26 @@ export function buildCopilotArgv(
 
 /**
  * Env for the spawned Copilot: point COPILOT_HOME at the isolated config dir,
- * and force every inherited `GITHUB_COPILOT_PROMPT_MODE_*` toggle to "false".
- * Those toggles (workspace MCP servers, project extensions, hooks, ...) let the
- * child load repo-controlled code without interactive trust; they default off
- * and we never want them on for a read-only call. The isolated, untrusted home
- * already blocks this (verified for workspace MCP and hooks), but neutralize the
- * env too so an operator's stray export can't flip it on under a future CLI.
+ * and neutralize inherited env that would widen the read scope or steer the
+ * isolated review:
+ * - `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` / `COPILOT_SKILLS_DIRS` → "" so the child
+ *   can't load instructions or skills from directories outside the cwd.
+ * - every `GITHUB_COPILOT_PROMPT_MODE_*` toggle (workspace MCP servers, project
+ *   extensions, hooks, ...) → "false" so it can't load repo-controlled code
+ *   without interactive trust.
+ * These default off / empty; we never want them on for a read-only call. The
+ * isolated, untrusted home already blocks most of this, but neutralize the env
+ * too so an operator's stray export can't flip it on.
  */
 export function copilotExtraEnv(
   home: string,
   env: NodeJS.ProcessEnv = process.env
 ): Record<string, string> {
-  const extra: Record<string, string> = { COPILOT_HOME: home };
+  const extra: Record<string, string> = {
+    COPILOT_HOME: home,
+    COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "",
+    COPILOT_SKILLS_DIRS: "",
+  };
   for (const key of Object.keys(env)) {
     if (key.startsWith("GITHUB_COPILOT_PROMPT_MODE_")) extra[key] = "false";
   }

@@ -146,16 +146,18 @@ back online is picked up on the next server start.
   file edits, worktree creation, and network tools — deny rules take
   precedence over any allow rules.
 - `ask_copilot` is read-only by policy too. Non-interactive Copilot requires
-  `--allow-all-tools` (otherwise it blocks on approval prompts), so the
-  read-only guarantee rests on deny rules, which win — "denial rules always
-  take precedence over allow rules, even --allow-all-tools": `--deny-tool
-  write` (file edits), `--deny-tool shell` (shell exec, which is also the
-  write-via-redirection and run-a-network-command vector), and `--deny-tool
-  url` (the web-fetch tool). `--disable-builtin-mcps` drops the bundled GitHub
-  MCP server (no GitHub API/network), and `--disallow-temp-dir` drops Copilot's
-  default access to the OS temp directory (its default read scope is the cwd
-  plus the temp dir), keeping reads within the given cwd. Like `ask_gemini`,
-  this is CLI policy, not an OS sandbox.
+  `--allow-all-tools` (otherwise it blocks on approval prompts), so rather than
+  deny dangerous tools one at a time, the model is given an **allow-list of only
+  file read + search tools** — `--available-tools=view,grep,glob`. Everything
+  else (file writes, shell, the network tools `web_fetch`/`web_search`, the
+  `skill` tool that can read outside the cwd, etc.) is simply not visible to it.
+  As belt-and-braces the dangerous kinds are also denied (`--deny-tool
+  write`/`shell`/`url`, which win since "denial rules always take precedence over
+  allow rules, even --allow-all-tools"). `--disable-builtin-mcps` drops the
+  bundled GitHub MCP server, and `--disallow-temp-dir` drops Copilot's default
+  access to the OS temp directory (its default read scope is the cwd plus the
+  temp dir), keeping reads within the given cwd. Like `ask_gemini`, this is CLI
+  policy, not an OS sandbox.
 - `ask_copilot` runs each call against an **isolated, throwaway config home**:
   it points `COPILOT_HOME` at a fresh temp dir (removed afterward), which Copilot
   lacks a `--strict-mcp-config` equivalent for otherwise. This means the user's
@@ -173,7 +175,12 @@ back online is picked up on the next server start.
   from which we copy **only** the `loggedInUsers` auth field (never trust state,
   plugins, or settings), so a `/login`-only setup keeps working without
   re-trusting the workspace. Any throwaway home left by a forced shutdown
-  (SIGINT/SIGTERM mid-call) is swept on process exit.
+  (SIGINT/SIGTERM mid-call) is swept on process exit. The spawned Copilot's
+  environment is also scrubbed: `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` and
+  `COPILOT_SKILLS_DIRS` are forced empty (no instructions or skills pulled from
+  outside the cwd), and every inherited `GITHUB_COPILOT_PROMPT_MODE_*` toggle is
+  forced `false` (no repo-controlled workspace MCP servers, extensions, or hooks
+  loaded without trust).
 - `ask_copilot` passes the prompt as a `--prompt=` command-line value: the
   Copilot CLI has no stdin-prompt support yet ([copilot-cli
   #1046](https://github.com/github/copilot-cli/issues/1046)), so unlike the

@@ -285,7 +285,7 @@ test("copilot prepareContext makes an isolated home that cleanup removes", async
   assert.ok(ctx.copilotHome, "an isolated COPILOT_HOME is allocated");
   try {
     assert.ok(statSync(ctx.copilotHome).isDirectory());
-    assert.deepEqual(c.extraEnv(ctx), { COPILOT_HOME: ctx.copilotHome });
+    assert.equal(c.extraEnv(ctx).COPILOT_HOME, ctx.copilotHome);
   } finally {
     await c.cleanup(ctx);
   }

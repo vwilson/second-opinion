@@ -118,7 +118,12 @@ test("buildCopilotArgv produces a read-only non-interactive invocation", () => {
     argv.includes("--allow-all-tools"),
     "required for non-interactive mode"
   );
-  // the dangerous tools are denied — deny beats --allow-all-tools
+  // the model sees only read/search tools — no write/shell/network/skill
+  assert.ok(
+    argv.includes("--available-tools=view,grep,glob"),
+    "only file read + search tools are available"
+  );
+  // the dangerous kinds are also denied — deny beats --allow-all-tools
   const denied = argv.reduce((acc, a, i) => {
     if (a === "--deny-tool") acc.push(argv[i + 1]);
     return acc;
@@ -176,14 +181,17 @@ test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {
 });
 
 test("newCopilotHome copies only the auth field, not trust/plugins", (t) => {
-  // a source home whose config.json (JSON-with-comments) mixes auth with
-  // isolation-breaking keys
+  // a source home whose config.json mixes auth with isolation-breaking keys,
+  // using the full range of JSONC syntax (line + inline block comments and a
+  // trailing comma) the tolerant parser must handle so the token still copies
   const src = mkdtempSync(path.join(os.tmpdir(), "second-opinion-srchome-"));
   writeFileSync(
     path.join(src, "config.json"),
-    '// managed automatically\n{ "loggedInUsers": [{ "login": "me" }], ' +
-      '"trustedFolders": ["/some/repo"], "installedPlugins": ["p"], ' +
-      '"firstLaunchAt": "x" }'
+    "// managed automatically\n{\n" +
+      '  "loggedInUsers": [{ "login": "me" }], /* the token lives here */\n' +
+      '  "trustedFolders": ["/some/repo"], // previously trusted\n' +
+      '  "installedPlugins": ["p"],\n' +
+      "}\n"
   );
   const prev = process.env.COPILOT_HOME;
   process.env.COPILOT_HOME = src;
@@ -227,20 +235,30 @@ test("removeCopilotHome removes a single home", () => {
   assert.ok(!existsSync(a), "the home is removed");
 });
 
-test("copilotExtraEnv sets COPILOT_HOME and forces prompt-mode toggles off", () => {
+test("copilotExtraEnv sets COPILOT_HOME and scrubs scope-widening env", () => {
   assert.deepEqual(copilotExtraEnv("/tmp/iso", {}), {
     COPILOT_HOME: "/tmp/iso",
+    COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "",
+    COPILOT_SKILLS_DIRS: "",
   });
-  // any inherited GITHUB_COPILOT_PROMPT_MODE_* var (repo-controlled code:
-  // workspace MCP, extensions, hooks) is forced false; unrelated env is left be
+  // inherited prompt-mode toggles → false; external instruction/skill dirs →
+  // empty; unrelated env is left alone
   const got = copilotExtraEnv("/tmp/iso", {
     GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: "true",
     GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP: "true",
+    COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/etc/evil",
+    COPILOT_SKILLS_DIRS: "/home/me/skills",
     PATH: "/usr/bin",
   });
   assert.equal(got.COPILOT_HOME, "/tmp/iso");
   assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, "false");
   assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP, "false");
+  assert.equal(
+    got.COPILOT_CUSTOM_INSTRUCTIONS_DIRS,
+    "",
+    "external instr dirs scrubbed"
+  );
+  assert.equal(got.COPILOT_SKILLS_DIRS, "", "external skill dirs scrubbed");
   assert.ok(!("PATH" in got), "unrelated env is left alone");
 });
 
