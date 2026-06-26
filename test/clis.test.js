@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   buildClaudeArgv,
   buildCodexArgv,
+  buildCopilotArgv,
   buildGeminiArgv,
   geminiExtraEnv,
   newCodexOutFile,
@@ -90,6 +91,48 @@ test("buildClaudeArgv produces an isolated read-only print invocation", () => {
 test("buildClaudeArgv passes the model override through", () => {
   const argv = buildClaudeArgv("claude-opus-4-8");
   assert.equal(argv[argv.indexOf("--model") + 1], "claude-opus-4-8");
+});
+
+test("buildCopilotArgv produces a read-only non-interactive invocation", () => {
+  const argv = buildCopilotArgv(undefined, "review this code");
+  // non-interactive, clean, isolated
+  assert.ok(argv.includes("--silent"), "must print only the agent response");
+  assert.ok(argv.includes("--no-auto-update"), "must not pause to self-update");
+  assert.ok(
+    argv.includes("--allow-all-tools"),
+    "required for non-interactive mode"
+  );
+  // the dangerous tools are denied — deny beats --allow-all-tools
+  const denied = argv.reduce((acc, a, i) => {
+    if (a === "--deny-tool") acc.push(argv[i + 1]);
+    return acc;
+  }, []);
+  for (const tool of ["write", "shell", "url"]) {
+    assert.ok(denied.includes(tool), `${tool} must be denied`);
+  }
+  assert.ok(
+    argv.includes("--disable-builtin-mcps"),
+    "must not load the GitHub MCP server"
+  );
+  assert.ok(argv.includes("--no-ask-user"), "must not block on questions");
+  assert.ok(
+    argv.includes("--disallow-temp-dir"),
+    "the OS temp-dir read exception is dropped"
+  );
+  assert.ok(!argv.includes("--model"), "no model flag unless requested");
+  // the prompt is an argv value (no stdin support); the `=` form keeps a
+  // dash-leading prompt from being parsed as a flag
+  assert.equal(argv.at(-1), "--prompt=review this code");
+});
+
+test("buildCopilotArgv passes the model and keeps a dash-leading prompt safe", () => {
+  const argv = buildCopilotArgv("auto", "--look at this");
+  assert.equal(argv[argv.indexOf("--model") + 1], "auto");
+  assert.equal(
+    argv.at(-1),
+    "--prompt=--look at this",
+    "prompt must be bound with = so it is not read as a flag"
+  );
 });
 
 test("geminiExtraEnv enables GCA only when no other auth is configured", () => {

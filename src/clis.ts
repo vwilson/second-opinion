@@ -104,6 +104,40 @@ export function buildClaudeArgv(model?: string): string[] {
   ];
 }
 
+export function buildCopilotArgv(
+  model: string | undefined,
+  prompt: string
+): string[] {
+  return [
+    // Non-interactive: run one prompt and exit. Copilot has no stdin-prompt
+    // support yet (github/copilot-cli #1046), so the prompt is passed as an
+    // argv value — very large prompts can hit the OS argument-length limit.
+    // The `--prompt=` (`=`) form keeps a prompt that starts with "-" from
+    // being parsed as a flag.
+    "--silent", // print only the final agent response, no tool-run chrome
+    "--no-color", // plain text (NO_COLOR is also set on the child env)
+    "--no-auto-update", // don't pause to download a CLI update mid-call
+    // --allow-all-tools is required for non-interactive mode; the deny rules
+    // below still win ("denial rules always take precedence over allow rules,
+    // even --allow-all-tools"), so read tools auto-run while the dangerous
+    // ones stay blocked.
+    "--allow-all-tools",
+    "--deny-tool",
+    "write", // block file-creating/modifying tools
+    "--deny-tool",
+    "shell", // block shell exec (also the write-via-redirection vector)
+    "--deny-tool",
+    "url", // block network URL access (the web-fetch tool)
+    "--disable-builtin-mcps", // no GitHub MCP server (no network / GitHub writes)
+    "--no-ask-user", // never block waiting to ask the user a question
+    // Copilot's default read scope is cwd + the OS temp dir; this drops the
+    // temp-dir half so reads stay within the cwd.
+    "--disallow-temp-dir",
+    ...(model ? ["--model", model] : []),
+    `--prompt=${prompt}`,
+  ];
+}
+
 export function geminiExtraEnv(
   env: NodeJS.ProcessEnv = process.env
 ): Record<string, string> {

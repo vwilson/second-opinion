@@ -249,6 +249,24 @@ test("codex.resolveModels defaults to the CLI flagship (no -m)", async () => {
   assert.deepEqual(await agent("codex").resolveModels(undefined), [undefined]);
 });
 
+test("copilot.resolveModels defaults to a single 'auto' candidate", async () => {
+  assert.deepEqual(await agent("copilot").resolveModels(undefined), ["auto"]);
+});
+
+test("copilot.resolveModels: explicit model collapses the chain", async () => {
+  assert.deepEqual(await agent("copilot").resolveModels("gpt-5.4"), [
+    "gpt-5.4",
+  ]);
+});
+
+test("copilot.isModelUnavailable is always false (no fallback)", () => {
+  const c = agent("copilot");
+  assert.equal(
+    c.isModelUnavailable({ output: "", stderrTail: "anything at all" }),
+    false
+  );
+});
+
 test("the Gemini safety-net model is free-tier reachable", () => {
   assert.equal(GEMINI_SAFETY_NET, "gemini-2.5-flash");
 });

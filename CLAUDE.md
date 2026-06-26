@@ -6,11 +6,13 @@ behavior, see `README.md`.
 ## What this is
 
 An MCP (stdio) server that exposes local CLI coding agents — **Codex**,
-**Gemini**, **Claude Code** — as one-shot, read-only "second opinion" tools
-(`ask_codex` / `ask_gemini` / `ask_claude`). Each call spawns the agent's CLI,
-feeds the prompt over stdin, and returns the final answer. TypeScript, ESM,
-Node ≥ 20; build with `npm run build`, test with `npm test` (`node --test`
-against `dist/`), lint with `npm run lint` (Biome).
+**Gemini**, **Claude Code**, **GitHub Copilot** — as one-shot, read-only
+"second opinion" tools (`ask_codex` / `ask_gemini` / `ask_claude` /
+`ask_copilot`). Each call spawns the agent's CLI, feeds the prompt (over stdin,
+or — for copilot, which has no stdin-prompt support — as a `--prompt=` argv
+value), and returns the final answer. TypeScript, ESM, Node ≥ 20; build with
+`npm run build`, test with `npm test` (`node --test` against `dist/`), lint with
+`npm run lint` (Biome).
 
 ## Architecture
 
@@ -19,10 +21,10 @@ is an `AgentDef` edit, not a handler/doctor edit**.
 
 | File              | Responsibility                                                                 |
 | ----------------- | ------------------------------------------------------------------------------ |
-| `src/agents.ts`   | `runAgent` (spawn + bounded stream capture + timeout/kill), CLI resolution, output helpers. No agent-specific logic. |
-| `src/clis.ts`     | Per-CLI argv builders (`build{Codex,Gemini,Claude}Argv`) and `geminiExtraEnv`. Pure; each takes an optional model. |
+| `src/agents.ts`   | `runAgent` (spawn + bounded stream capture + timeout/kill), CLI resolution (`resolveCliEntry` for npm globals; `resolveNativeOrNpmCli` shared by claude/copilot), output helpers. No agent-specific logic. |
+| `src/clis.ts`     | Per-CLI argv builders (`build{Codex,Gemini,Claude,Copilot}Argv`) and `geminiExtraEnv`. Pure; each takes an optional model (copilot's also takes the prompt). |
 | `src/models.ts`   | Gemini model discovery (`listGeminiModels`) + ranking (`rankGeminiModels`), curated fallbacks, and the shared `SAFE_MODEL_RE`. |
-| `src/registry.ts` | The `AgentDef` interface, the three agent definitions (`AGENTS`), per-agent model resolution + cache, and `runAgentWithFallback`. |
+| `src/registry.ts` | The `AgentDef` interface, the four agent definitions (`AGENTS`), per-agent model resolution + cache, and `runAgentWithFallback`. |
 | `src/index.ts`    | MCP wiring: one generic handler registered for every `AgentDef`; input schema; drain-on-stdin-close. |
 | `src/doctor.ts`   | `--doctor` health check; loops `AGENTS` through `runAgentWithFallback` and reports the model each used. |
 
@@ -63,6 +65,11 @@ Per-agent base lists:
   `geminiProbeList` keeps the best discovered Flash even when the cap would
   otherwise drop it behind tier-gated Pro candidates. Discovery is bounded by
   the call's remaining timeout budget.
+- **copilot** → `["auto"]` (a single candidate, no fallback, like codex). We
+  pass Copilot's own `--model auto` routing — which picks an appropriate model
+  for the account and sidesteps the wonky per-model premium-request pricing —
+  rather than relying on the CLI's configured default, which can be a stale id
+  the API rejects.
 
 ### `isModelUnavailable` must be precise
 
@@ -77,6 +84,7 @@ to stdout). Current matchers:
   so a service/account outage like "Service is currently unavailable" isn't
   misread) or unknown/invalid model.
 - **codex:** none (single-candidate list, so no fallback to trigger).
+- **copilot:** none (single `"auto"` candidate, so no fallback to trigger).
 
 The whole fallback chain shares one `timeout_seconds` deadline
 (`runAgentWithFallback`), so trying N candidates can't run N× the budget — each
@@ -100,5 +108,16 @@ in `registry.ts` and add a case to `test/models.test.js`.
   leading dash could smuggle a CLI flag (e.g. `--yolo`) into the spawned
   process. Discovered Gemini ids are already filtered through it.
 - Keep agents read-only: don't add file-writing or shell-enabling flags.
+  Copilot is the loose one — `--allow-all-tools` is required for its
+  non-interactive mode, so its read-only guarantee rests on the deny rules
+  (`--deny-tool write/shell/url`, which win because "denial rules always take
+  precedence over allow rules, even --allow-all-tools") plus
+  `--disable-builtin-mcps`. Don't remove a deny without re-checking the
+  write/shell/network surface. Known gap: Copilot has no `--strict-mcp-config`
+  equivalent, so user-configured MCP servers (`~/.copilot/mcp-config.json`)
+  still load and the deny rules cover only built-in tools — documented in the
+  README. Its prompt rides in a `--prompt=` argv value (no stdin support yet,
+  github/copilot-cli #1046), so very large prompts can hit the OS arg-length
+  limit.
 - Match the existing style (2-space indent, double quotes); run `npm run lint`
   before finishing.

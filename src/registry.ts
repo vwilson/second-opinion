@@ -6,11 +6,13 @@ import {
   cleanGeminiOutput,
   readFileCapped,
   resolveClaudeCli,
+  resolveCopilotCli,
   runAgent,
 } from "./agents.js";
 import {
   buildClaudeArgv,
   buildCodexArgv,
+  buildCopilotArgv,
   buildGeminiArgv,
   geminiExtraEnv,
   newCodexOutFile,
@@ -51,7 +53,13 @@ export interface AgentDef {
   /** locate the CLI; may throw if it isn't installed */
   resolveCli(): CliCommand;
   prepareContext(cwd: string): AgentContext;
-  buildArgv(model: string | undefined, ctx: AgentContext): string[];
+  /** the prompt is passed too: most agents feed it over stdin and ignore it
+   * here, but copilot has no stdin-prompt support and takes it as an argv value */
+  buildArgv(
+    model: string | undefined,
+    ctx: AgentContext,
+    prompt: string
+  ): string[];
   extraEnv(): Record<string, string> | undefined;
   /** ordered model candidates, smartest-first (cache- and override-aware).
    * `budgetMs` bounds any discovery I/O to the call's remaining timeout. */
@@ -142,6 +150,14 @@ const CLAUDE_MODELS: (string | undefined)[] = [
   "claude-opus-4-8",
   undefined,
 ];
+
+// Copilot's own "auto" routing picks an appropriate model for the account, so
+// we let it choose (one candidate, no fallback) rather than naming a model id
+// that drifts or is gated by the wonky per-model premium-request pricing. A
+// per-call / env-override model still flows through. We pass an explicit
+// `--model auto` rather than relying on the CLI's configured default, which can
+// be a stale id the API rejects.
+const COPILOT_MODELS: (string | undefined)[] = ["auto"];
 
 const CODEX: AgentDef = {
   name: "codex",
@@ -273,7 +289,42 @@ const CLAUDE: AgentDef = {
   cleanup: async () => {},
 };
 
-export const AGENTS: AgentDef[] = [CODEX, GEMINI, CLAUDE];
+const COPILOT: AgentDef = {
+  name: "copilot",
+  toolName: "ask_copilot",
+  title: "Ask GitHub Copilot (second opinion)",
+  description:
+    "Get a second opinion from GitHub Copilot (Copilot CLI) running locally with read-only access " +
+    "to the user's files. One-shot and stateless: it explores the given cwd, reasons about the " +
+    "code, and returns a single final answer. File edits, shell commands, and network access by " +
+    "Copilot's built-in tools are denied by policy (--deny-tool write/shell/url and the built-in " +
+    "GitHub MCP server disabled; not an OS sandbox). Caveat: Copilot has no way to skip a user's " +
+    "own configured MCP servers, so any in ~/.copilot/mcp-config.json still load and are NOT covered " +
+    "by these deny rules — the read-only guarantee holds only when none are write- or network-" +
+    "capable. Copilot auto-selects an appropriate model for your account (override per call with " +
+    "`model`). Note: Copilot has no stdin-prompt support, so the prompt is passed on the command " +
+    "line — a very large prompt may exceed the OS argument-length limit. Use for: reviewing a plan " +
+    "or diff, debugging hypotheses, architecture trade-offs, or cross-checking your own conclusion. " +
+    "Calls typically take 1-5 minutes. May be called in parallel with the other tools.",
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  resolveCli: () => resolveCopilotCli(),
+  prepareContext: (cwd) => ({ cwd }),
+  buildArgv: (model, _ctx, prompt) => buildCopilotArgv(model, prompt),
+  extraEnv: () => undefined,
+  // single candidate ("auto"); a per-call / env-override model still flows
+  // through. Like codex, there is no fallback to advance to.
+  resolveModels: async (requested) => {
+    const forced = forcedModel("copilot", requested);
+    return forced ? [forced] : withCache("copilot", [...COPILOT_MODELS]);
+  },
+  isModelUnavailable: () => false,
+  // --silent already limits stdout to the final answer (no tool-run chrome), so
+  // just trim, like claude.
+  extractAnswer: async (result) => result.output.trim(),
+  cleanup: async () => {},
+};
+
+export const AGENTS: AgentDef[] = [CODEX, GEMINI, CLAUDE, COPILOT];
 
 export interface FallbackRunOptions {
   requested: string | undefined;
@@ -332,7 +383,7 @@ export async function runAgentWithFallback(
     try {
       const result = await runAgent({
         command: cli.command,
-        argv: [...cli.prefixArgs, ...def.buildArgv(model, ctx)],
+        argv: [...cli.prefixArgs, ...def.buildArgv(model, ctx, opts.prompt)],
         prompt: opts.prompt,
         cwd: opts.cwd,
         timeoutMs: remainingMs,
