@@ -299,6 +299,10 @@ export function buildCopilotArgv(
  * Env for the spawned Copilot: point COPILOT_HOME at the isolated config dir,
  * and neutralize inherited env that would widen the read scope or steer the
  * isolated review:
+ * - `COPILOT_ALLOW_ALL` → "false" so tool auto-approval comes only from our
+ *   explicit `--allow-all-tools` flag (which still wins — verified), and the env
+ *   can't add `--allow-all-paths`/`--allow-all-urls` if it is the `--allow-all`
+ *   alias in some build.
  * - `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` / `COPILOT_SKILLS_DIRS` → "" so the child
  *   can't load instructions or skills from directories outside the cwd.
  * - every `GITHUB_COPILOT_PROMPT_MODE_*` toggle (workspace MCP servers, project
@@ -314,6 +318,7 @@ export function copilotExtraEnv(
 ): Record<string, string> {
   const extra: Record<string, string> = {
     COPILOT_HOME: home,
+    COPILOT_ALLOW_ALL: "false",
     COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "",
     COPILOT_SKILLS_DIRS: "",
   };

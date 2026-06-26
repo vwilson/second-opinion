@@ -238,12 +238,14 @@ test("removeCopilotHome removes a single home", () => {
 test("copilotExtraEnv sets COPILOT_HOME and scrubs scope-widening env", () => {
   assert.deepEqual(copilotExtraEnv("/tmp/iso", {}), {
     COPILOT_HOME: "/tmp/iso",
+    COPILOT_ALLOW_ALL: "false",
     COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "",
     COPILOT_SKILLS_DIRS: "",
   });
   // inherited prompt-mode toggles → false; external instruction/skill dirs →
   // empty; unrelated env is left alone
   const got = copilotExtraEnv("/tmp/iso", {
+    COPILOT_ALLOW_ALL: "true",
     GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: "true",
     GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP: "true",
     COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/etc/evil",
@@ -251,6 +253,7 @@ test("copilotExtraEnv sets COPILOT_HOME and scrubs scope-widening env", () => {
     PATH: "/usr/bin",
   });
   assert.equal(got.COPILOT_HOME, "/tmp/iso");
+  assert.equal(got.COPILOT_ALLOW_ALL, "false", "allow-all env forced off");
   assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, "false");
   assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP, "false");
   assert.equal(
