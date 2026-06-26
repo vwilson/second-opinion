@@ -176,11 +176,19 @@ back online is picked up on the next server start.
   plugins, or settings), so a `/login`-only setup keeps working without
   re-trusting the workspace. Any throwaway home left by a forced shutdown
   (SIGINT/SIGTERM mid-call) is swept on process exit. The spawned Copilot's
-  environment is also scrubbed: `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` and
-  `COPILOT_SKILLS_DIRS` are forced empty (no instructions or skills pulled from
-  outside the cwd), and every inherited `GITHUB_COPILOT_PROMPT_MODE_*` toggle is
-  forced `false` (no repo-controlled workspace MCP servers, extensions, or hooks
-  loaded without trust).
+  environment is also scrubbed: `COPILOT_ALLOW_ALL` is forced `false` (tool
+  approval comes only from our explicit `--allow-all-tools`),
+  `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` / `COPILOT_SKILLS_DIRS` are forced empty (no
+  instructions or skills from outside the cwd), every inherited
+  `GITHUB_COPILOT_PROMPT_MODE_*` toggle is forced `false` (no repo-controlled
+  workspace MCP servers, extensions, or hooks without trust), and every inherited
+  `OTEL_*` / `COPILOT_OTEL_*` var is cleared (an OpenTelemetry exporter would
+  otherwise be extra egress that ships the prompt + read file contents to a file
+  or endpoint, below the tool layer). Inference-routing vars that an operator
+  deliberately sets — `COPILOT_PROVIDER_*` (BYOK), `GH_HOST`, `HTTP_PROXY` — are
+  left alone: like any LLM CLI, the model call itself goes to the endpoint the
+  operator configured (GitHub by default); that's not part of the model's
+  tool-network surface, which stays blocked.
 - `ask_copilot` passes the prompt as a `--prompt=` command-line value: the
   Copilot CLI has no stdin-prompt support yet ([copilot-cli
   #1046](https://github.com/github/copilot-cli/issues/1046)), so unlike the

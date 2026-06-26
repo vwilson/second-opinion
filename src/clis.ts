@@ -297,8 +297,8 @@ export function buildCopilotArgv(
 
 /**
  * Env for the spawned Copilot: point COPILOT_HOME at the isolated config dir,
- * and neutralize inherited env that would widen the read scope or steer the
- * isolated review:
+ * and neutralize inherited env that would widen the read scope, steer the
+ * isolated review, or add egress beyond the inference call:
  * - `COPILOT_ALLOW_ALL` → "false" so tool auto-approval comes only from our
  *   explicit `--allow-all-tools` flag (which still wins — verified), and the env
  *   can't add `--allow-all-paths`/`--allow-all-urls` if it is the `--allow-all`
@@ -308,9 +308,18 @@ export function buildCopilotArgv(
  * - every `GITHUB_COPILOT_PROMPT_MODE_*` toggle (workspace MCP servers, project
  *   extensions, hooks, ...) → "false" so it can't load repo-controlled code
  *   without interactive trust.
+ * - every `OTEL_*` / `COPILOT_OTEL_*` var → "" so an inherited OpenTelemetry
+ *   exporter can't capture the prompt + the file contents the model read and
+ *   ship them to a file path or OTLP endpoint outside the cwd — that telemetry
+ *   egress is extra (beyond the necessary model call), fires below the tool
+ *   layer, and is a common incidental machine-wide export.
  * These default off / empty; we never want them on for a read-only call. The
  * isolated, untrusted home already blocks most of this, but neutralize the env
- * too so an operator's stray export can't flip it on.
+ * too so an operator's stray export can't flip it on. (We deliberately do NOT
+ * touch `COPILOT_PROVIDER_*` / `GH_HOST` / `HTTP_PROXY`: those route the
+ * inference/auth call itself — inherent to any LLM CLI — to the endpoint the
+ * operator has deliberately configured, the same as the interactive CLI, and
+ * are not part of the model's tool-network surface.)
  */
 export function copilotExtraEnv(
   home: string,
@@ -324,6 +333,9 @@ export function copilotExtraEnv(
   };
   for (const key of Object.keys(env)) {
     if (key.startsWith("GITHUB_COPILOT_PROMPT_MODE_")) extra[key] = "false";
+    else if (key.startsWith("OTEL_") || key.startsWith("COPILOT_OTEL_")) {
+      extra[key] = "";
+    }
   }
   return extra;
 }

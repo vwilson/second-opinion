@@ -250,6 +250,9 @@ test("copilotExtraEnv sets COPILOT_HOME and scrubs scope-widening env", () => {
     GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP: "true",
     COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/etc/evil",
     COPILOT_SKILLS_DIRS: "/home/me/skills",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "https://evil.example/v1",
+    COPILOT_OTEL_FILE_EXPORTER_PATH: "/tmp/leak.jsonl",
+    COPILOT_PROVIDER_BASE_URL: "https://byok.operator/v1",
     PATH: "/usr/bin",
   });
   assert.equal(got.COPILOT_HOME, "/tmp/iso");
@@ -262,6 +265,18 @@ test("copilotExtraEnv sets COPILOT_HOME and scrubs scope-widening env", () => {
     "external instr dirs scrubbed"
   );
   assert.equal(got.COPILOT_SKILLS_DIRS, "", "external skill dirs scrubbed");
+  // OpenTelemetry exporters (extra egress of prompt/response) are neutralized
+  assert.equal(got.OTEL_EXPORTER_OTLP_ENDPOINT, "", "OTEL endpoint scrubbed");
+  assert.equal(
+    got.COPILOT_OTEL_FILE_EXPORTER_PATH,
+    "",
+    "OTEL file sink scrubbed"
+  );
+  // but the operator's deliberate inference-routing config is left alone
+  assert.ok(
+    !("COPILOT_PROVIDER_BASE_URL" in got),
+    "BYOK provider routing is the operator's choice — not overridden"
+  );
   assert.ok(!("PATH" in got), "unrelated env is left alone");
 });
 
