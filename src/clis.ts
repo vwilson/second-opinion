@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -117,10 +123,33 @@ export function buildClaudeArgv(model?: string): string[] {
  */
 export function newCopilotHome(): string {
   const dir = path.join(os.tmpdir(), `second-opinion-copilot-${randomUUID()}`);
-  mkdirSync(dir, { recursive: true });
+  // 0700: the live session transcript (prompts + responses) lands in here, so
+  // keep other local users on a shared host from reading it before cleanup.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  // Preserve auth without importing the rest of the user's config: a headless
+  // login with no OS keychain stores the OAuth token in <home>/config.json
+  // (Copilot's storeTokenPlaintext fallback), so copy just that one file —
+  // otherwise pointing COPILOT_HOME at a fresh dir would log such a user out.
+  // mcp-config.json, hooks/, plugins/, and the user's settings.json are
+  // deliberately NOT copied; that isolation is the whole point.
+  const srcHome =
+    process.env.COPILOT_HOME ?? path.join(os.homedir(), ".copilot");
+  const srcConfig = path.join(srcHome, "config.json");
+  if (existsSync(srcConfig)) {
+    try {
+      const destConfig = path.join(dir, "config.json");
+      copyFileSync(srcConfig, destConfig);
+      chmodSync(destConfig, 0o600); // may hold a plaintext token
+    } catch {
+      // best effort; a keychain-based login doesn't need this file
+    }
+  }
+
   writeFileSync(
     path.join(dir, "settings.json"),
-    JSON.stringify({ disableAllHooks: true })
+    JSON.stringify({ disableAllHooks: true }),
+    { mode: 0o600 }
   );
   return dir;
 }

@@ -151,6 +151,10 @@ test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {
   assert.notEqual(a, b, "each call gets its own isolated home");
   assert.equal(path.dirname(a), os.tmpdir());
   assert.ok(statSync(a).isDirectory(), "the dir is created");
+  // POSIX: the home holds the live transcript, so it must not be world-readable
+  if (process.platform !== "win32") {
+    assert.equal(statSync(a).mode & 0o777, 0o700, "the isolated home is 0700");
+  }
   const settings = JSON.parse(
     readFileSync(path.join(a, "settings.json"), "utf8")
   );

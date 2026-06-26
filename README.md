@@ -74,7 +74,12 @@ Each tool only needs its own CLI, so install the ones you'll ask:
 - `copilot` (GitHub Copilot CLI) installed (`winget install GitHub.Copilot`,
   or `npm i -g @github/copilot`) and authenticated — run `copilot` once and
   `/login`, or set `GH_TOKEN` / `GITHUB_TOKEN` in the server's environment.
-  Until then `ask_copilot` returns the CLI's auth error.
+  Until then `ask_copilot` returns the CLI's auth error. The native install is a
+  self-contained binary and works regardless of the Node version this server
+  runs under; the **npm** install runs `@github/copilot/npm-loader.js` with that
+  same Node, and Copilot's npm package wants Node 22+ — so on a Node-20 server,
+  prefer the native install (or set `SECOND_OPINION_COPILOT_CLI` to a native
+  binary).
 - The CLIs are discovered automatically:
   - Windows: PATH scan for the `.cmd` shim (with `node_modules` beside it),
     plus the `%APPDATA%\npm` fallback. For claude and copilot, a PATH scan for
@@ -161,6 +166,11 @@ back online is picked up on the next server start.
   transcript is ephemeral — not written to `~/.copilot/session-state` and, with
   `--no-remote-export`, not synced to GitHub web/mobile. Only machine-admin
   *policy* hooks (which Copilot never lets a session disable) can still run.
+  The isolated home is created `0700` so other local users can't read the
+  transcript, and the OAuth token is preserved: Copilot keeps it in the OS
+  keychain (used directly), or — on a headless host with no keychain — in
+  `config.json`, the one file we copy into the isolated home, so a
+  `/login`-only setup keeps working.
 - `ask_copilot` passes the prompt as a `--prompt=` command-line value: the
   Copilot CLI has no stdin-prompt support yet ([copilot-cli
   #1046](https://github.com/github/copilot-cli/issues/1046)), so unlike the
