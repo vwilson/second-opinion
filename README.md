@@ -161,7 +161,8 @@ back online is picked up on the next server start.
   lacks a `--strict-mcp-config` equivalent for otherwise. This means the user's
   own `~/.copilot/mcp-config.json` servers do not load (closing the gap that
   deny rules cover only built-in tools), user/plugin hooks do not load, the
-  workspace is treated as untrusted so a repo's `.github/hooks` do not run (we
+  workspace is treated as untrusted so a repo's own MCP servers
+  (`.mcp.json` / `.github/mcp.json`) and `.github/hooks` do not load (we
   also write `disableAllHooks` into the isolated home), and the session
   transcript is ephemeral — not written to `~/.copilot/session-state` and, with
   `--no-remote-export`, not synced to GitHub web/mobile. Only machine-admin

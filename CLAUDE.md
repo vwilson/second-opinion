@@ -117,8 +117,9 @@ in `registry.ts` and add a case to `test/models.test.js`.
   `--no-session-persistence` / `--ephemeral` equivalents, so instead each call
   runs against a throwaway `COPILOT_HOME` (`newCopilotHome`, removed in
   `cleanup`): the user's MCP servers, hooks, plugins, and saved permissions
-  don't load, the workspace is untrusted (repo `.github/hooks` don't run — plus
-  an explicit `disableAllHooks`), and the session transcript is ephemeral
+  don't load, the workspace is untrusted (so repo MCP servers
+  `.mcp.json`/`.github/mcp.json` and `.github/hooks` don't load — verified —
+  plus an explicit `disableAllHooks`), and the session transcript is ephemeral
   (`--no-remote-export` also blocks the GitHub sync). Only machine-admin policy
   hooks can still run. Its prompt rides in a `--prompt=` argv value (no stdin
   support yet, github/copilot-cli #1046), so it's visible in process listings
