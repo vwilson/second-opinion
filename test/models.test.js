@@ -270,9 +270,11 @@ test("copilot.isModelUnavailable is always false (no fallback)", () => {
 
 test("copilot.extraEnv points COPILOT_HOME at the isolated config dir", () => {
   const c = agent("copilot");
-  assert.deepEqual(c.extraEnv({ cwd: "/p", copilotHome: "/tmp/iso" }), {
-    COPILOT_HOME: "/tmp/iso",
-  });
+  // robust to the prompt-mode scrub adding extra keys (see copilotExtraEnv)
+  assert.equal(
+    c.extraEnv({ cwd: "/p", copilotHome: "/tmp/iso" }).COPILOT_HOME,
+    "/tmp/iso"
+  );
   // no isolated home in the context → no env override
   assert.equal(c.extraEnv({ cwd: "/p" }), undefined);
 });

@@ -14,6 +14,7 @@ import {
   buildCodexArgv,
   buildCopilotArgv,
   buildGeminiArgv,
+  copilotExtraEnv,
   geminiExtraEnv,
   newCodexOutFile,
   newCopilotHome,
@@ -320,7 +321,7 @@ const COPILOT: AgentDef = {
   prepareContext: (cwd) => ({ cwd, copilotHome: newCopilotHome() }),
   buildArgv: (model, _ctx, prompt) => buildCopilotArgv(model, prompt),
   extraEnv: (ctx) =>
-    ctx.copilotHome ? { COPILOT_HOME: ctx.copilotHome } : undefined,
+    ctx.copilotHome ? copilotExtraEnv(ctx.copilotHome) : undefined,
   // single candidate ("auto"); a per-call / env-override model still flows
   // through. Like codex, there is no fallback to advance to.
   resolveModels: async (requested) => {

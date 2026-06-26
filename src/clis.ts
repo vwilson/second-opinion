@@ -234,6 +234,26 @@ export function buildCopilotArgv(
   ];
 }
 
+/**
+ * Env for the spawned Copilot: point COPILOT_HOME at the isolated config dir,
+ * and force every inherited `GITHUB_COPILOT_PROMPT_MODE_*` toggle to "false".
+ * Those toggles (workspace MCP servers, project extensions, hooks, ...) let the
+ * child load repo-controlled code without interactive trust; they default off
+ * and we never want them on for a read-only call. The isolated, untrusted home
+ * already blocks this (verified for workspace MCP and hooks), but neutralize the
+ * env too so an operator's stray export can't flip it on under a future CLI.
+ */
+export function copilotExtraEnv(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const extra: Record<string, string> = { COPILOT_HOME: home };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GITHUB_COPILOT_PROMPT_MODE_")) extra[key] = "false";
+  }
+  return extra;
+}
+
 export function geminiExtraEnv(
   env: NodeJS.ProcessEnv = process.env
 ): Record<string, string> {

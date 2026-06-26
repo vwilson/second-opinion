@@ -17,6 +17,7 @@ import {
   buildCopilotArgv,
   buildGeminiArgv,
   cleanupCopilotHomes,
+  copilotExtraEnv,
   geminiExtraEnv,
   newCodexOutFile,
   newCopilotHome,
@@ -224,6 +225,23 @@ test("removeCopilotHome removes a single home", () => {
   assert.ok(existsSync(a));
   removeCopilotHome(a);
   assert.ok(!existsSync(a), "the home is removed");
+});
+
+test("copilotExtraEnv sets COPILOT_HOME and forces prompt-mode toggles off", () => {
+  assert.deepEqual(copilotExtraEnv("/tmp/iso", {}), {
+    COPILOT_HOME: "/tmp/iso",
+  });
+  // any inherited GITHUB_COPILOT_PROMPT_MODE_* var (repo-controlled code:
+  // workspace MCP, extensions, hooks) is forced false; unrelated env is left be
+  const got = copilotExtraEnv("/tmp/iso", {
+    GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: "true",
+    GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP: "true",
+    PATH: "/usr/bin",
+  });
+  assert.equal(got.COPILOT_HOME, "/tmp/iso");
+  assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, "false");
+  assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP, "false");
+  assert.ok(!("PATH" in got), "unrelated env is left alone");
 });
 
 test("geminiExtraEnv enables GCA only when no other auth is configured", () => {
