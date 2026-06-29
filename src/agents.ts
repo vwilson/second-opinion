@@ -252,30 +252,51 @@ export interface CliCommand {
   prefixArgs: string[];
 }
 
-const CLAUDE_PKG_ENTRY = "@anthropic-ai/claude-code/cli.js";
-const CLAUDE_ENV_VAR = "SECOND_OPINION_CLAUDE_CLI";
+/**
+ * A CLI that ships two ways: a native standalone executable on PATH, or an npm
+ * global whose bin is a JS entry run via node. Both claude (native installer
+ * vs `@anthropic-ai/claude-code`) and copilot (winget/native exe vs
+ * `@github/copilot`, whose bin is a loader script) fit this shape, so they
+ * share one resolver. Native is preferred since it is the recommended install.
+ */
+export interface NativeOrNpmCli {
+  /** bare command name on PATH ("claude", "copilot"); `.exe`/`.cmd` derived on Windows */
+  name: string;
+  /** human name for the "not found" message, e.g. "GitHub Copilot CLI" */
+  displayName: string;
+  /** install instructions for the "not found" message */
+  installHint: string;
+  /** the npm package's bin JS entry, e.g. "@github/copilot/npm-loader.js" */
+  pkgEntry: string;
+  /** absolute-path override env var, e.g. "SECOND_OPINION_COPILOT_CLI" */
+  envVar: string;
+}
 
-let claudeCliCache: CliCommand | undefined;
+const nativeOrNpmCache = new Map<string, CliCommand>();
 
-function asCliCommand(target: string): CliCommand {
+/**
+ * Turn an override path into a CliCommand: a `.js`/`.mjs` entry runs via node, a
+ * `.cmd` shim (which can't be spawned with shell:false on Node >= 20.12)
+ * resolves to its adjacent npm package entry, anything else is run as a native
+ * executable.
+ */
+function overrideToCliCommand(target: string, cli: NativeOrNpmCli): CliCommand {
   const lower = target.toLowerCase();
   if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
     return { command: process.execPath, prefixArgs: [target] };
   }
-  // .cmd shims can't be spawned with shell:false on Node >= 20.12; resolve
-  // the npm package entry that lives beside the shim instead
   if (lower.endsWith(".cmd")) {
     const entry = path.join(
       path.dirname(target),
       "node_modules",
-      ...CLAUDE_PKG_ENTRY.split("/")
+      ...cli.pkgEntry.split("/")
     );
     if (existsSync(entry)) {
       return { command: process.execPath, prefixArgs: [entry] };
     }
     throw new Error(
-      `${CLAUDE_ENV_VAR} points at a .cmd shim ("${target}") with no ` +
-        `adjacent node_modules${path.sep}${CLAUDE_PKG_ENTRY.replaceAll("/", path.sep)}. ` +
+      `${cli.envVar} points at a .cmd shim ("${target}") with no ` +
+        `adjacent node_modules${path.sep}${cli.pkgEntry.replaceAll("/", path.sep)}. ` +
         `Set it to the CLI's JS entry point or native executable instead.`
     );
   }
@@ -283,23 +304,27 @@ function asCliCommand(target: string): CliCommand {
 }
 
 /**
- * Locate the Claude Code CLI. Unlike codex/gemini it ships two ways: the
- * native installer puts a standalone executable on PATH (~/.local/bin), and
- * the npm global install puts a shim beside node_modules. Native is checked
- * first since it is the recommended install.
+ * Locate a CLI that ships as a native executable or an npm global. The native
+ * binary is checked first (the recommended install). Results are cached per
+ * env-var key for the process lifetime.
  */
-export function resolveClaudeCli(): CliCommand {
-  if (claudeCliCache) return claudeCliCache;
+export function resolveNativeOrNpmCli(cli: NativeOrNpmCli): CliCommand {
+  const cached = nativeOrNpmCache.get(cli.envVar);
+  if (cached) return cached;
 
-  const override = process.env[CLAUDE_ENV_VAR];
+  const remember = (cmd: CliCommand): CliCommand => {
+    nativeOrNpmCache.set(cli.envVar, cmd);
+    return cmd;
+  };
+
+  const override = process.env[cli.envVar];
   if (override) {
     if (!existsSync(override)) {
       throw new Error(
-        `${CLAUDE_ENV_VAR} is set to "${override}", but that file does not exist.`
+        `${cli.envVar} is set to "${override}", but that file does not exist.`
       );
     }
-    claudeCliCache = asCliCommand(override);
-    return claudeCliCache;
+    return remember(overrideToCliCommand(override, cli));
   }
 
   const isWindows = process.platform === "win32";
@@ -307,58 +332,87 @@ export function resolveClaudeCli(): CliCommand {
     .split(path.delimiter)
     .filter(Boolean);
   const expectedSuffix =
-    path.sep + path.join("node_modules", ...CLAUDE_PKG_ENTRY.split("/"));
+    path.sep + path.join("node_modules", ...cli.pkgEntry.split("/"));
 
   if (isWindows) {
     for (const dir of pathDirs) {
-      const exe = path.join(dir, "claude.exe");
-      if (existsSync(exe)) {
-        claudeCliCache = { command: exe, prefixArgs: [] };
-        return claudeCliCache;
-      }
+      const exe = path.join(dir, `${cli.name}.exe`);
+      if (existsSync(exe)) return remember({ command: exe, prefixArgs: [] });
     }
+    const cmdShim = `${cli.name}.cmd`;
     const jsRoots = [
       ...pathDirs
-        .filter((dir) => existsSync(path.join(dir, "claude.cmd")))
+        .filter((dir) => existsSync(path.join(dir, cmdShim)))
         .map((dir) => path.join(dir, "node_modules")),
       ...(process.env.APPDATA
         ? [path.join(process.env.APPDATA, "npm", "node_modules")]
         : []),
     ];
     for (const root of jsRoots) {
-      const entry = path.join(root, ...CLAUDE_PKG_ENTRY.split("/"));
+      const entry = path.join(root, ...cli.pkgEntry.split("/"));
       if (existsSync(entry)) {
-        claudeCliCache = { command: process.execPath, prefixArgs: [entry] };
-        return claudeCliCache;
+        return remember({ command: process.execPath, prefixArgs: [entry] });
       }
     }
   } else {
+    // Prefer a native binary over the npm global the way the Windows branch
+    // does: scan ALL of PATH for a native install first, and only fall back to
+    // the npm loader (run via node) if no native binary is found. Otherwise an
+    // npm shim earlier in PATH would shadow a working native binary later on it.
+    let npmFallback: CliCommand | undefined;
     for (const dir of pathDirs) {
-      const shim = path.join(dir, "claude");
+      const shim = path.join(dir, cli.name);
       if (!existsSync(shim)) continue;
       try {
         const target = realpathSync(shim);
         if (target.endsWith(expectedSuffix)) {
-          // npm global: bin symlink straight to the package's cli.js
-          claudeCliCache = { command: process.execPath, prefixArgs: [target] };
-          return claudeCliCache;
+          // npm global: bin symlink straight to the package's JS entry → node.
+          // Remember the first one, but keep scanning for a native binary.
+          npmFallback ??= { command: process.execPath, prefixArgs: [target] };
+        } else {
+          // native installer: a standalone binary (possibly symlinked into
+          // ~/.local/bin) → run it directly, preferred.
+          return remember({ command: target, prefixArgs: [] });
         }
-        // native installer: a standalone binary (possibly symlinked into
-        // ~/.local/bin); run it directly
-        claudeCliCache = { command: target, prefixArgs: [] };
-        return claudeCliCache;
       } catch {
         // symlink loop, permissions, etc.; try the next PATH entry
       }
     }
+    if (npmFallback) return remember(npmFallback);
   }
 
   throw new Error(
-    `Could not locate the claude CLI on PATH. Install Claude Code (native ` +
-      `installer or npm i -g @anthropic-ai/claude-code), or set ` +
-      `${CLAUDE_ENV_VAR} to the CLI's absolute path (the native executable ` +
-      `or ${CLAUDE_PKG_ENTRY}).`
+    `Could not locate the ${cli.name} CLI on PATH. Install ${cli.displayName} ` +
+      `(${cli.installHint}), or set ${cli.envVar} to the CLI's absolute path ` +
+      `(the native executable or ${cli.pkgEntry}).`
   );
+}
+
+/**
+ * Locate the Claude Code CLI (native installer executable or npm global).
+ */
+export function resolveClaudeCli(): CliCommand {
+  return resolveNativeOrNpmCli({
+    name: "claude",
+    displayName: "Claude Code",
+    installHint: "native installer or npm i -g @anthropic-ai/claude-code",
+    pkgEntry: "@anthropic-ai/claude-code/cli.js",
+    envVar: "SECOND_OPINION_CLAUDE_CLI",
+  });
+}
+
+/**
+ * Locate the GitHub Copilot CLI (winget/native executable or npm global). The
+ * npm package's bin is a loader script (`npm-loader.js`) that is run via node.
+ */
+export function resolveCopilotCli(): CliCommand {
+  return resolveNativeOrNpmCli({
+    name: "copilot",
+    displayName: "GitHub Copilot CLI",
+    installHint: "winget install GitHub.Copilot, or npm i -g @github/copilot",
+    pkgEntry: "@github/copilot/npm-loader.js",
+    envVar: "SECOND_OPINION_COPILOT_CLI",
+  });
 }
 
 const liveChildren = new Set<number>();

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveCliEntry } from "../dist/agents.js";
+import { resolveCliEntry, resolveNativeOrNpmCli } from "../dist/agents.js";
 
 const isWindows = process.platform === "win32";
 
@@ -12,6 +12,20 @@ const isWindows = process.platform === "win32";
 let envVarCounter = 0;
 function uniqueEnvVar() {
   return `SECOND_OPINION_TEST_ENTRY_${process.pid}_${envVarCounter++}`;
+}
+
+// resolveNativeOrNpmCli also caches by env var; give each test a fresh config
+let cliCounter = 0;
+function uniqueCli(overrides = {}) {
+  const n = `${process.pid}_${cliCounter++}`;
+  return {
+    name: `fakecli${n}`,
+    displayName: `Fake CLI ${n}`,
+    installHint: "install it somehow",
+    pkgEntry: `fake-pkg-${n}/loader.js`,
+    envVar: `SECOND_OPINION_FAKE_${n}`,
+    ...overrides,
+  };
 }
 
 async function makeTempDir(t) {
@@ -77,6 +91,160 @@ test("throws a helpful error when nothing is found", async (t) => {
     }
   );
 });
+
+// ---- resolveNativeOrNpmCli (native exe OR npm-loader, claude + copilot) ----
+
+test("nativeOrNpm: env override to a .js entry runs via node", async (t) => {
+  const dir = await makeTempDir(t);
+  const entry = path.join(dir, "loader.js");
+  await writeFile(entry, "// stub\n");
+  const cli = uniqueCli();
+  process.env[cli.envVar] = entry;
+  t.after(() => {
+    delete process.env[cli.envVar];
+  });
+
+  const cmd = resolveNativeOrNpmCli(cli);
+  assert.equal(cmd.command, process.execPath);
+  assert.deepEqual(cmd.prefixArgs, [entry]);
+});
+
+test("nativeOrNpm: env override to a native binary runs it directly", async (t) => {
+  const dir = await makeTempDir(t);
+  const exe = path.join(dir, isWindows ? "mycli.exe" : "mycli");
+  await writeFile(exe, "binary\n");
+  const cli = uniqueCli();
+  process.env[cli.envVar] = exe;
+  t.after(() => {
+    delete process.env[cli.envVar];
+  });
+
+  const cmd = resolveNativeOrNpmCli(cli);
+  assert.equal(cmd.command, exe);
+  assert.deepEqual(cmd.prefixArgs, []);
+});
+
+test("nativeOrNpm: env override pointing at a missing file throws", async (t) => {
+  const cli = uniqueCli();
+  process.env[cli.envVar] = path.join(
+    os.tmpdir(),
+    "second-opinion-missing-xyz"
+  );
+  t.after(() => {
+    delete process.env[cli.envVar];
+  });
+
+  assert.throws(() => resolveNativeOrNpmCli(cli), new RegExp(cli.envVar));
+});
+
+test("nativeOrNpm: a helpful error names the CLI, env var, and package", async (t) => {
+  const empty = await makeTempDir(t);
+  withPath(t, [empty]);
+  const cli = uniqueCli();
+
+  assert.throws(
+    () => resolveNativeOrNpmCli(cli),
+    (err) => {
+      assert.match(err.message, new RegExp(cli.name));
+      assert.match(err.message, new RegExp(cli.displayName));
+      assert.match(err.message, new RegExp(cli.envVar));
+      assert.ok(err.message.includes(cli.pkgEntry));
+      return true;
+    }
+  );
+});
+
+if (isWindows) {
+  test("windows: nativeOrNpm finds <name>.exe on PATH and runs it directly", async (t) => {
+    const bin = await makeTempDir(t);
+    const cli = uniqueCli();
+    const exe = path.join(bin, `${cli.name}.exe`);
+    await writeFile(exe, "binary\n");
+    withPath(t, [bin]);
+
+    const cmd = resolveNativeOrNpmCli(cli);
+    assert.equal(cmd.command, exe);
+    assert.deepEqual(cmd.prefixArgs, []);
+  });
+
+  test("windows: nativeOrNpm resolves a .cmd shim to its npm loader entry", async (t) => {
+    const bin = await makeTempDir(t);
+    const cli = uniqueCli();
+    const entry = path.join(bin, "node_modules", ...cli.pkgEntry.split("/"));
+    await mkdir(path.dirname(entry), { recursive: true });
+    await writeFile(entry, "// loader\n");
+    await writeFile(path.join(bin, `${cli.name}.cmd`), "@echo off\n");
+    withPath(t, [bin]);
+
+    const cmd = resolveNativeOrNpmCli(cli);
+    assert.equal(cmd.command, process.execPath);
+    assert.deepEqual(cmd.prefixArgs, [entry]);
+  });
+} else {
+  test("posix: nativeOrNpm runs a native-binary shim directly", async (t) => {
+    const bin = await makeTempDir(t);
+    const cli = uniqueCli();
+    // a plain-file shim whose realpath is not inside the npm package
+    await writeFile(path.join(bin, cli.name), "#!/bin/sh\n");
+    withPath(t, [bin]);
+
+    const cmd = resolveNativeOrNpmCli(cli);
+    assert.ok(cmd.command.endsWith(cli.name));
+    assert.deepEqual(cmd.prefixArgs, []);
+  });
+
+  test("posix: nativeOrNpm resolves an npm bin symlink to node + entry", async (t) => {
+    const prefix = await makeTempDir(t);
+    const bin = path.join(prefix, "bin");
+    const cli = uniqueCli();
+    const entry = path.join(
+      prefix,
+      "lib",
+      "node_modules",
+      ...cli.pkgEntry.split("/")
+    );
+    await mkdir(bin, { recursive: true });
+    await mkdir(path.dirname(entry), { recursive: true });
+    await writeFile(entry, "// loader\n");
+    await symlink(entry, path.join(bin, cli.name));
+    withPath(t, [bin]);
+
+    const cmd = resolveNativeOrNpmCli(cli);
+    assert.equal(cmd.command, process.execPath);
+    assert.ok(
+      cmd.prefixArgs[0].endsWith(
+        path.join("node_modules", ...cli.pkgEntry.split("/"))
+      )
+    );
+  });
+
+  test("posix: nativeOrNpm prefers a native binary even if npm is earlier on PATH", async (t) => {
+    const prefix = await makeTempDir(t);
+    const cli = uniqueCli();
+    // npm install: an earlier PATH dir whose shim symlinks to the package entry
+    const npmBin = path.join(prefix, "npm-bin");
+    const entry = path.join(
+      prefix,
+      "lib",
+      "node_modules",
+      ...cli.pkgEntry.split("/")
+    );
+    await mkdir(npmBin, { recursive: true });
+    await mkdir(path.dirname(entry), { recursive: true });
+    await writeFile(entry, "// loader\n");
+    await symlink(entry, path.join(npmBin, cli.name));
+    // native install: a later PATH dir with a standalone binary
+    const nativeBin = path.join(prefix, "native-bin");
+    await mkdir(nativeBin, { recursive: true });
+    await writeFile(path.join(nativeBin, cli.name), "#!/bin/sh\n");
+    // npm dir FIRST on PATH — the native binary must still win
+    withPath(t, [npmBin, nativeBin]);
+
+    const cmd = resolveNativeOrNpmCli(cli);
+    assert.deepEqual(cmd.prefixArgs, [], "the native binary is run directly");
+    assert.ok(cmd.command.endsWith(path.join("native-bin", cli.name)));
+  });
+}
 
 if (isWindows) {
   test("windows: finds the entry beside the .cmd shim's node_modules", async (t) => {

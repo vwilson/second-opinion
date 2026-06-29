@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, statSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -247,6 +248,48 @@ test("claude.resolveModels: Fable, Opus, then the CLI default", async () => {
 
 test("codex.resolveModels defaults to the CLI flagship (no -m)", async () => {
   assert.deepEqual(await agent("codex").resolveModels(undefined), [undefined]);
+});
+
+test("copilot.resolveModels defaults to a single 'auto' candidate", async () => {
+  assert.deepEqual(await agent("copilot").resolveModels(undefined), ["auto"]);
+});
+
+test("copilot.resolveModels: explicit model collapses the chain", async () => {
+  assert.deepEqual(await agent("copilot").resolveModels("gpt-5.4"), [
+    "gpt-5.4",
+  ]);
+});
+
+test("copilot.isModelUnavailable is always false (no fallback)", () => {
+  const c = agent("copilot");
+  assert.equal(
+    c.isModelUnavailable({ output: "", stderrTail: "anything at all" }),
+    false
+  );
+});
+
+test("copilot.extraEnv points COPILOT_HOME at the isolated config dir", () => {
+  const c = agent("copilot");
+  // robust to the prompt-mode scrub adding extra keys (see copilotExtraEnv)
+  assert.equal(
+    c.extraEnv({ cwd: "/p", copilotHome: "/tmp/iso" }).COPILOT_HOME,
+    "/tmp/iso"
+  );
+  // no isolated home in the context → no env override
+  assert.equal(c.extraEnv({ cwd: "/p" }), undefined);
+});
+
+test("copilot prepareContext makes an isolated home that cleanup removes", async () => {
+  const c = agent("copilot");
+  const ctx = c.prepareContext("/some/cwd");
+  assert.ok(ctx.copilotHome, "an isolated COPILOT_HOME is allocated");
+  try {
+    assert.ok(statSync(ctx.copilotHome).isDirectory());
+    assert.equal(c.extraEnv(ctx).COPILOT_HOME, ctx.copilotHome);
+  } finally {
+    await c.cleanup(ctx);
+  }
+  assert.ok(!existsSync(ctx.copilotHome), "cleanup removes the isolated home");
 });
 
 test("the Gemini safety-net model is free-tier reachable", () => {

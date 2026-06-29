@@ -6,14 +6,19 @@ import {
   cleanGeminiOutput,
   readFileCapped,
   resolveClaudeCli,
+  resolveCopilotCli,
   runAgent,
 } from "./agents.js";
 import {
   buildClaudeArgv,
   buildCodexArgv,
+  buildCopilotArgv,
   buildGeminiArgv,
+  copilotExtraEnv,
   geminiExtraEnv,
   newCodexOutFile,
+  newCopilotHome,
+  removeCopilotHome,
   resolveCodexEntry,
   resolveGeminiEntry,
 } from "./clis.js";
@@ -26,10 +31,12 @@ import {
 } from "./models.js";
 
 // Per-invocation state an agent may need to thread from argv construction
-// through answer extraction (codex writes its final message to a temp file).
+// through answer extraction (codex writes its final message to a temp file;
+// copilot runs against a throwaway config home that is removed in cleanup).
 export interface AgentContext {
   cwd: string;
   outFile?: string;
+  copilotHome?: string;
 }
 
 /**
@@ -52,7 +59,9 @@ export interface AgentDef {
   resolveCli(): CliCommand;
   prepareContext(cwd: string): AgentContext;
   buildArgv(model: string | undefined, ctx: AgentContext): string[];
-  extraEnv(): Record<string, string> | undefined;
+  /** extra env for the spawned CLI; receives the context so copilot can point
+   * COPILOT_HOME at its per-call isolated config dir */
+  extraEnv(ctx: AgentContext): Record<string, string> | undefined;
   /** ordered model candidates, smartest-first (cache- and override-aware).
    * `budgetMs` bounds any discovery I/O to the call's remaining timeout. */
   resolveModels(
@@ -142,6 +151,14 @@ const CLAUDE_MODELS: (string | undefined)[] = [
   "claude-opus-4-8",
   undefined,
 ];
+
+// Copilot's own "auto" routing picks an appropriate model for the account, so
+// we let it choose (one candidate, no fallback) rather than naming a model id
+// that drifts or is gated by the wonky per-model premium-request pricing. A
+// per-call / env-override model still flows through. We pass an explicit
+// `--model auto` rather than relying on the CLI's configured default, which can
+// be a stale id the API rejects.
+const COPILOT_MODELS: (string | undefined)[] = ["auto"];
 
 const CODEX: AgentDef = {
   name: "codex",
@@ -273,7 +290,46 @@ const CLAUDE: AgentDef = {
   cleanup: async () => {},
 };
 
-export const AGENTS: AgentDef[] = [CODEX, GEMINI, CLAUDE];
+const COPILOT: AgentDef = {
+  name: "copilot",
+  toolName: "ask_copilot",
+  title: "Ask GitHub Copilot (second opinion)",
+  description:
+    "Get a second opinion from GitHub Copilot (Copilot CLI) running locally with read-only access " +
+    "to the user's files. One-shot and stateless: it explores the given cwd, reasons about the " +
+    "code, and returns a single final answer. File edits, shell commands, and network access are " +
+    "denied by policy (--deny-tool write/shell/url and the built-in GitHub MCP server disabled; not " +
+    "an OS sandbox). Each call runs against an isolated, throwaway config home, so the user's own " +
+    "MCP servers, hooks, and saved permissions are not loaded and the session transcript is " +
+    "ephemeral (not persisted to ~/.copilot or synced to GitHub). Copilot auto-selects an " +
+    "appropriate model for your account (override per call with `model`). Use for: reviewing " +
+    "a plan or diff, debugging hypotheses, architecture trade-offs, or cross-checking your own " +
+    "conclusion. Calls typically take 1-5 minutes. May be called in parallel with the other tools.",
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  resolveCli: () => resolveCopilotCli(),
+  // each call gets a throwaway COPILOT_HOME (removed in cleanup) so the user's
+  // MCP servers / hooks / saved permissions don't load and the session is
+  // ephemeral; see newCopilotHome.
+  prepareContext: (cwd) => ({ cwd, copilotHome: newCopilotHome() }),
+  buildArgv: (model) => buildCopilotArgv(model),
+  extraEnv: (ctx) =>
+    ctx.copilotHome ? copilotExtraEnv(ctx.copilotHome) : undefined,
+  // single candidate ("auto"); a per-call / env-override model still flows
+  // through. Like codex, there is no fallback to advance to.
+  resolveModels: async (requested) => {
+    const forced = forcedModel("copilot", requested);
+    return forced ? [forced] : withCache("copilot", [...COPILOT_MODELS]);
+  },
+  isModelUnavailable: () => false,
+  // --silent already limits stdout to the final answer (no tool-run chrome), so
+  // just trim, like claude.
+  extractAnswer: async (result) => result.output.trim(),
+  cleanup: async (ctx) => {
+    if (ctx.copilotHome) removeCopilotHome(ctx.copilotHome);
+  },
+};
+
+export const AGENTS: AgentDef[] = [CODEX, GEMINI, CLAUDE, COPILOT];
 
 export interface FallbackRunOptions {
   requested: string | undefined;
@@ -336,7 +392,7 @@ export async function runAgentWithFallback(
         prompt: opts.prompt,
         cwd: opts.cwd,
         timeoutMs: remainingMs,
-        extraEnv: def.extraEnv(),
+        extraEnv: def.extraEnv(ctx),
         onProgress: opts.onProgress,
       });
       last = result;

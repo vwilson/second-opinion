@@ -1,4 +1,11 @@
 import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -102,6 +109,230 @@ export function buildClaudeArgv(model?: string): string[] {
     "WebFetch",
     "WebSearch",
   ];
+}
+
+// Active throwaway COPILOT_HOMEs, so a forced shutdown (SIGINT/SIGTERM while a
+// call is still running) can remove any whose per-call cleanup didn't run.
+const activeCopilotHomes = new Set<string>();
+
+// Strip `//` line and `/* */` block comments, string-aware so a comment marker
+// inside a quoted value is preserved.
+function stripComments(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\") out += text[++i] ?? "";
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === "/" && text[i + 1] === "/") {
+      i += 2;
+      while (i < text.length && text[i] !== "\n") i++; // the loop's i++ eats \n
+    } else if (c === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i++; // skip the '*'; the loop's i++ skips the '/'
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+// Drop trailing commas before `}`/`]`, string-aware so a comma inside a value
+// is preserved. Run on comment-free text so the lookahead need only skip space.
+function dropTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\") out += text[++i] ?? "";
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === "}" || text[j] === "]") continue; // trailing comma → drop
+    }
+    out += c;
+  }
+  return out;
+}
+
+// Copilot's config.json is JSON-with-comments and may carry trailing commas;
+// parse it tolerantly rather than letting a stray comment silently drop the
+// auth copy (which would log out a no-keychain user).
+function parseJsonc(text: string): unknown {
+  return JSON.parse(dropTrailingCommas(stripComments(text)));
+}
+
+/**
+ * Create a throwaway COPILOT_HOME so each ask_copilot call runs with an
+ * isolated config: the user's own MCP servers, hooks, plugins, and saved
+ * permissions (all keyed off ~/.copilot) are not loaded, the workspace is
+ * treated as untrusted (so a repo's `.github/hooks` and `.mcp.json` don't run),
+ * and the session transcript stays in this dir (removed in cleanup) instead of
+ * persisting to ~/.copilot/session-state. `disableAllHooks` is also written
+ * explicitly as defense-in-depth — it disables repo- and user-level hooks
+ * (policy hooks, set by a machine admin, can't be and are trusted).
+ */
+export function newCopilotHome(): string {
+  const dir = path.join(os.tmpdir(), `second-opinion-copilot-${randomUUID()}`);
+  // 0700: the live session transcript (prompts + responses) lands in here, so
+  // keep other local users on a shared host from reading it before cleanup.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  activeCopilotHomes.add(dir);
+
+  // Preserve auth WITHOUT importing trust or settings: a headless login with no
+  // OS keychain stores the token in <home>/config.json (Copilot's
+  // storeTokenPlaintext fallback). Copy ONLY the auth field (`loggedInUsers`)
+  // into the isolated home — never `trustedFolders`, `installedPlugins`, or
+  // migrated legacy settings — so the workspace stays untrusted. A keychain
+  // login keeps no token here and needs nothing copied.
+  const srcHome =
+    process.env.COPILOT_HOME ?? path.join(os.homedir(), ".copilot");
+  const srcConfig = path.join(srcHome, "config.json");
+  if (existsSync(srcConfig)) {
+    try {
+      const cfg = parseJsonc(readFileSync(srcConfig, "utf8"));
+      if (cfg && typeof cfg === "object" && "loggedInUsers" in cfg) {
+        writeFileSync(
+          path.join(dir, "config.json"),
+          JSON.stringify({
+            loggedInUsers: (cfg as { loggedInUsers: unknown }).loggedInUsers,
+          }),
+          { mode: 0o600 } // may hold a plaintext token
+        );
+      }
+    } catch {
+      // unreadable / non-JSON / no plaintext token; keychain logins don't need it
+    }
+  }
+
+  writeFileSync(
+    path.join(dir, "settings.json"),
+    JSON.stringify({ disableAllHooks: true }),
+    { mode: 0o600 }
+  );
+  return dir;
+}
+
+/** Remove one isolated home and stop tracking it (per-call cleanup). */
+export function removeCopilotHome(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best effort
+  }
+  activeCopilotHomes.delete(dir);
+}
+
+/**
+ * Remove every isolated home still tracked. Runs from a `process.on("exit")`
+ * hook so a forced shutdown (where the per-call cleanup never got to run) does
+ * not leave token-bearing temp dirs behind. Sync, because exit hooks must be.
+ */
+export function cleanupCopilotHomes(): void {
+  for (const dir of activeCopilotHomes) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best effort; a still-running child may hold files open on Windows
+    }
+  }
+  activeCopilotHomes.clear();
+}
+
+export function buildCopilotArgv(model?: string): string[] {
+  return [
+    // Non-interactive: with NO `-p`/`--prompt` and a non-TTY stdin, Copilot
+    // reads the piped prompt and exits (runAgent writes it to stdin, like the
+    // other agents). This keeps the prompt off the command line — no
+    // process-listing exposure and no OS argument-length limit.
+    "--silent", // print only the final agent response, no tool-run chrome
+    "--no-color", // plain text (NO_COLOR is also set on the child env)
+    "--no-auto-update", // don't pause to download a CLI update mid-call
+    "--no-remote-export", // don't export the session to GitHub web/mobile
+    // Allow-list the tools the model can even see: just file read + search.
+    // This is the primary read-only mechanism — it removes write/shell, the
+    // network tools (web_fetch/web_search), `skill` (which can read outside the
+    // cwd), and everything else by construction, rather than denying the
+    // dangerous ones one kind at a time. --allow-all-tools then auto-approves
+    // these three so the non-interactive run never blocks on a prompt.
+    "--available-tools=view,grep,glob",
+    "--allow-all-tools",
+    // Belt-and-braces under the allow-list (deny beats allow): block the tool
+    // kinds outright in case a build ignores --available-tools.
+    "--deny-tool",
+    "write", // file-creating/modifying tools
+    "--deny-tool",
+    "shell", // shell exec (also the write-via-redirection vector)
+    "--deny-tool",
+    "url", // network URL access (web-fetch)
+    "--disable-builtin-mcps", // no GitHub MCP server (no network / GitHub writes)
+    "--no-ask-user", // never block waiting to ask the user a question
+    // Copilot's default read scope is cwd + the OS temp dir; this drops the
+    // temp-dir half so reads stay within the cwd.
+    "--disallow-temp-dir",
+    ...(model ? ["--model", model] : []),
+  ];
+}
+
+/**
+ * Env for the spawned Copilot: point COPILOT_HOME at the isolated config dir,
+ * and neutralize inherited env that would widen the read scope, steer the
+ * isolated review, or add egress beyond the inference call:
+ * - `COPILOT_ALLOW_ALL` → "false" so tool auto-approval comes only from our
+ *   explicit `--allow-all-tools` flag (which still wins — verified), and the env
+ *   can't add `--allow-all-paths`/`--allow-all-urls` if it is the `--allow-all`
+ *   alias in some build.
+ * - `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` / `COPILOT_SKILLS_DIRS` → "" so the child
+ *   can't load instructions or skills from directories outside the cwd.
+ * - every `GITHUB_COPILOT_PROMPT_MODE_*` toggle (workspace MCP servers, project
+ *   extensions, hooks, ...) → "false" so it can't load repo-controlled code
+ *   without interactive trust.
+ * - every `OTEL_*` / `COPILOT_OTEL_*` var → "" so an inherited OpenTelemetry
+ *   exporter can't capture the prompt + the file contents the model read and
+ *   ship them to a file path or OTLP endpoint outside the cwd — that telemetry
+ *   egress is extra (beyond the necessary model call), fires below the tool
+ *   layer, and is a common incidental machine-wide export.
+ * These default off / empty; we never want them on for a read-only call. The
+ * isolated, untrusted home already blocks most of this, but neutralize the env
+ * too so an operator's stray export can't flip it on. (We deliberately do NOT
+ * touch `COPILOT_PROVIDER_*` / `GH_HOST` / `HTTP_PROXY`: those route the
+ * inference/auth call itself — inherent to any LLM CLI — to the endpoint the
+ * operator has deliberately configured, the same as the interactive CLI, and
+ * are not part of the model's tool-network surface.)
+ */
+export function copilotExtraEnv(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const extra: Record<string, string> = {
+    COPILOT_HOME: home,
+    COPILOT_ALLOW_ALL: "false",
+    COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "",
+    COPILOT_SKILLS_DIRS: "",
+  };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GITHUB_COPILOT_PROMPT_MODE_")) extra[key] = "false";
+    else if (key.startsWith("OTEL_") || key.startsWith("COPILOT_OTEL_")) {
+      extra[key] = "";
+    }
+  }
+  return extra;
 }
 
 export function geminiExtraEnv(

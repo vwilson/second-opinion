@@ -1,4 +1,12 @@
 import assert from "node:assert/strict";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -6,9 +14,14 @@ import test from "node:test";
 import {
   buildClaudeArgv,
   buildCodexArgv,
+  buildCopilotArgv,
   buildGeminiArgv,
+  cleanupCopilotHomes,
+  copilotExtraEnv,
   geminiExtraEnv,
   newCodexOutFile,
+  newCopilotHome,
+  removeCopilotHome,
 } from "../dist/clis.js";
 
 test("buildCodexArgv produces the read-only exec invocation", () => {
@@ -90,6 +103,180 @@ test("buildClaudeArgv produces an isolated read-only print invocation", () => {
 test("buildClaudeArgv passes the model override through", () => {
   const argv = buildClaudeArgv("claude-opus-4-8");
   assert.equal(argv[argv.indexOf("--model") + 1], "claude-opus-4-8");
+});
+
+test("buildCopilotArgv produces a read-only non-interactive invocation", () => {
+  const argv = buildCopilotArgv();
+  // non-interactive, clean, isolated
+  assert.ok(argv.includes("--silent"), "must print only the agent response");
+  assert.ok(argv.includes("--no-auto-update"), "must not pause to self-update");
+  assert.ok(
+    argv.includes("--no-remote-export"),
+    "must not export the session to GitHub"
+  );
+  assert.ok(
+    argv.includes("--allow-all-tools"),
+    "required for non-interactive mode"
+  );
+  // the model sees only read/search tools — no write/shell/network/skill
+  assert.ok(
+    argv.includes("--available-tools=view,grep,glob"),
+    "only file read + search tools are available"
+  );
+  // the dangerous kinds are also denied — deny beats --allow-all-tools
+  const denied = argv.reduce((acc, a, i) => {
+    if (a === "--deny-tool") acc.push(argv[i + 1]);
+    return acc;
+  }, []);
+  for (const tool of ["write", "shell", "url"]) {
+    assert.ok(denied.includes(tool), `${tool} must be denied`);
+  }
+  assert.ok(
+    argv.includes("--disable-builtin-mcps"),
+    "must not load the GitHub MCP server"
+  );
+  assert.ok(argv.includes("--no-ask-user"), "must not block on questions");
+  assert.ok(
+    argv.includes("--disallow-temp-dir"),
+    "the OS temp-dir read exception is dropped"
+  );
+  assert.ok(!argv.includes("--model"), "no model flag unless requested");
+  // the prompt is fed over stdin (like the other agents), never in argv: no
+  // `-p`/`--prompt`, so a non-TTY stdin is read as the prompt
+  assert.ok(!argv.includes("-p"), "no -p, so stdin is read as the prompt");
+  assert.ok(
+    !argv.some((a) => a === "--prompt" || a.startsWith("--prompt=")),
+    "the prompt must not appear on the command line"
+  );
+});
+
+test("buildCopilotArgv passes the model override through", () => {
+  const argv = buildCopilotArgv("auto");
+  assert.equal(argv[argv.indexOf("--model") + 1], "auto");
+});
+
+test("newCopilotHome makes a unique temp dir with hooks disabled", (t) => {
+  const a = newCopilotHome();
+  const b = newCopilotHome();
+  t.after(() => {
+    removeCopilotHome(a);
+    removeCopilotHome(b);
+  });
+  assert.notEqual(a, b, "each call gets its own isolated home");
+  assert.equal(path.dirname(a), os.tmpdir());
+  assert.ok(statSync(a).isDirectory(), "the dir is created");
+  // POSIX: the home holds the live transcript, so it must not be world-readable
+  if (process.platform !== "win32") {
+    assert.equal(statSync(a).mode & 0o777, 0o700, "the isolated home is 0700");
+  }
+  const settings = JSON.parse(
+    readFileSync(path.join(a, "settings.json"), "utf8")
+  );
+  assert.equal(
+    settings.disableAllHooks,
+    true,
+    "repo- and user-level hooks are disabled"
+  );
+});
+
+test("newCopilotHome copies only the auth field, not trust/plugins", (t) => {
+  // a source home whose config.json mixes auth with isolation-breaking keys,
+  // using the full range of JSONC syntax (line + inline block comments and a
+  // trailing comma) the tolerant parser must handle so the token still copies
+  const src = mkdtempSync(path.join(os.tmpdir(), "second-opinion-srchome-"));
+  writeFileSync(
+    path.join(src, "config.json"),
+    "// managed automatically\n{\n" +
+      '  "loggedInUsers": [{ "login": "me" }], /* the token lives here */\n' +
+      '  "trustedFolders": ["/some/repo"], // previously trusted\n' +
+      '  "installedPlugins": ["p"],\n' +
+      "}\n"
+  );
+  const prev = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = src;
+  let home;
+  try {
+    home = newCopilotHome();
+  } finally {
+    if (prev === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = prev;
+  }
+  t.after(() => {
+    removeCopilotHome(home);
+    rmSync(src, { recursive: true, force: true });
+  });
+
+  const copied = JSON.parse(
+    readFileSync(path.join(home, "config.json"), "utf8")
+  );
+  assert.deepEqual(
+    Object.keys(copied),
+    ["loggedInUsers"],
+    "only the auth field is copied"
+  );
+  assert.ok(!("trustedFolders" in copied), "trust must not be imported");
+  assert.ok(!("installedPlugins" in copied), "plugins must not be imported");
+});
+
+test("cleanupCopilotHomes removes every tracked home (forced-shutdown path)", () => {
+  const a = newCopilotHome();
+  const b = newCopilotHome();
+  assert.ok(existsSync(a) && existsSync(b));
+  cleanupCopilotHomes();
+  assert.ok(!existsSync(a), "tracked home a is removed");
+  assert.ok(!existsSync(b), "tracked home b is removed");
+});
+
+test("removeCopilotHome removes a single home", () => {
+  const a = newCopilotHome();
+  assert.ok(existsSync(a));
+  removeCopilotHome(a);
+  assert.ok(!existsSync(a), "the home is removed");
+});
+
+test("copilotExtraEnv sets COPILOT_HOME and scrubs scope-widening env", () => {
+  assert.deepEqual(copilotExtraEnv("/tmp/iso", {}), {
+    COPILOT_HOME: "/tmp/iso",
+    COPILOT_ALLOW_ALL: "false",
+    COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "",
+    COPILOT_SKILLS_DIRS: "",
+  });
+  // inherited prompt-mode toggles → false; external instruction/skill dirs →
+  // empty; unrelated env is left alone
+  const got = copilotExtraEnv("/tmp/iso", {
+    COPILOT_ALLOW_ALL: "true",
+    GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: "true",
+    GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP: "true",
+    COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/etc/evil",
+    COPILOT_SKILLS_DIRS: "/home/me/skills",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "https://evil.example/v1",
+    COPILOT_OTEL_FILE_EXPORTER_PATH: "/tmp/leak.jsonl",
+    COPILOT_PROVIDER_BASE_URL: "https://byok.operator/v1",
+    PATH: "/usr/bin",
+  });
+  assert.equal(got.COPILOT_HOME, "/tmp/iso");
+  assert.equal(got.COPILOT_ALLOW_ALL, "false", "allow-all env forced off");
+  assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, "false");
+  assert.equal(got.GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP, "false");
+  assert.equal(
+    got.COPILOT_CUSTOM_INSTRUCTIONS_DIRS,
+    "",
+    "external instr dirs scrubbed"
+  );
+  assert.equal(got.COPILOT_SKILLS_DIRS, "", "external skill dirs scrubbed");
+  // OpenTelemetry exporters (extra egress of prompt/response) are neutralized
+  assert.equal(got.OTEL_EXPORTER_OTLP_ENDPOINT, "", "OTEL endpoint scrubbed");
+  assert.equal(
+    got.COPILOT_OTEL_FILE_EXPORTER_PATH,
+    "",
+    "OTEL file sink scrubbed"
+  );
+  // but the operator's deliberate inference-routing config is left alone
+  assert.ok(
+    !("COPILOT_PROVIDER_BASE_URL" in got),
+    "BYOK provider routing is the operator's choice — not overridden"
+  );
+  assert.ok(!("PATH" in got), "unrelated env is left alone");
 });
 
 test("geminiExtraEnv enables GCA only when no other auth is configured", () => {
